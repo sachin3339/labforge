@@ -7,9 +7,25 @@ import { config } from '../config.js';
 
 const Query = z.object({ t: z.string().min(10) });
 
+// Statuses where the existing container is still usable. Anything else means
+// we must provision a fresh one for this launch.
+const LIVE_STATUSES = new Set([
+  'pending',
+  'provisioning',
+  'ready',
+  'idle',
+  'paused',
+]);
+
 /**
- * Browser-facing endpoints. No api-key auth — the JWT in the URL is the
- * authentication mechanism (single-use, short-lived).
+ * Browser-facing endpoints. No api-key auth — the signed JWT in the URL is
+ * the authentication mechanism. The URL is REUSABLE within its `exp` window:
+ * the same student can revisit it across days / devices / after clearing
+ * cookies and be reconnected to (or reissued) their lab.
+ *
+ * Revocation: an admin can revoke an unredeemed (or any) launch by clearing
+ * its `tokenJti`. This route refuses redemption when the stored jti doesn't
+ * match the token's jti.
  */
 export const redeemRoutes: FastifyPluginAsync = async (app) => {
   app.get('/launch/redeem', async (req, reply) => {
@@ -27,39 +43,64 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'invalid_token', detail: (err as Error).message };
     }
 
-    // Atomic single-use redemption. UPDATE ... WHERE tokenJti=? AND redeemedAt
-    // IS NULL guarantees only one request wins.
-    const claimed = await prisma.launch.updateMany({
-      where: { id: claims.sub, tokenJti: claims.jti, redeemedAt: null },
-      data: { redeemedAt: new Date() },
-    });
-    if (claimed.count === 0) {
-      reply.code(409);
-      return { error: 'token_already_used_or_unknown' };
-    }
-
-    const launch = await prisma.launch.findUniqueOrThrow({
+    const launch = await prisma.launch.findUnique({
       where: { id: claims.sub },
-      include: { template: true },
+      include: { template: true, instance: true },
     });
-
-    let instance;
-    try {
-      instance = await acquireInstance({
-        tenantId: launch.tenantId,
-        template: launch.template,
-        userIdHash: launch.userIdHash,
-        durationMinutes: launch.durationMinutes,
-      });
-    } catch (err) {
-      reply.code(500);
-      return { error: 'provision_failed', detail: (err as Error).message };
+    if (!launch) {
+      reply.code(404);
+      return { error: 'launch_not_found' };
     }
 
-    await prisma.launch.update({
-      where: { id: launch.id },
-      data: { instanceId: instance.id, tokenJti: null },
-    });
+    // Revocation check: admins null `tokenJti` to revoke. A fresh URL has
+    // tokenJti === claims.jti; a revoked one has tokenJti === null.
+    if (launch.tokenJti !== claims.jti) {
+      reply.code(401);
+      return { error: 'token_revoked' };
+    }
+
+    // Server-side expiry guard (the JWT's own exp is already checked by
+    // verifyLaunchToken, but launches can also be revoked-by-expiry).
+    if (launch.expiresAt.getTime() <= Date.now()) {
+      reply.code(401);
+      return { error: 'launch_expired' };
+    }
+
+    // Reuse the existing instance if it is still alive; otherwise provision
+    // a fresh one. This is what makes the URL reusable across days: a
+    // reaped/terminated container is silently replaced.
+    let instance = launch.instance;
+    if (!instance || !LIVE_STATUSES.has(instance.status)) {
+      try {
+        instance = await acquireInstance({
+          tenantId: launch.tenantId,
+          template: launch.template,
+          userIdHash: launch.userIdHash,
+          durationMinutes: launch.durationMinutes,
+        });
+      } catch (err) {
+        reply.code(500);
+        return { error: 'provision_failed', detail: (err as Error).message };
+      }
+
+      // Detach any stale instance pointer before attaching the new one —
+      // `Launch.instanceId` is a unique column.
+      await prisma.launch.update({
+        where: { id: launch.id },
+        data: {
+          instanceId: instance.id,
+          // First redeem stamps redeemedAt; subsequent ones leave it alone.
+          redeemedAt: launch.redeemedAt ?? new Date(),
+        },
+      });
+    } else if (!launch.redeemedAt) {
+      // Instance already attached (e.g. created via a different path) but
+      // first time we're recording the redemption.
+      await prisma.launch.update({
+        where: { id: launch.id },
+        data: { redeemedAt: new Date() },
+      });
+    }
 
     const { token: sessionToken, expiresAt } = await signSessionToken({
       sub: instance.id,

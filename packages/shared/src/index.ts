@@ -142,8 +142,13 @@ export const BatchLaunchRequest = z.object({
   count: z.number().int().min(1).max(500),
   /** Lab session length once the URL is redeemed. */
   durationMinutes: z.number().int().min(5).max(480).default(120),
-  /** How long the launch URL itself stays valid before redeem. */
-  ttlHours: z.number().int().min(1).max(168).default(24),
+  /**
+   * How long the launch URL itself stays valid. The URL is reusable
+   * within this window — the same student can revisit it across days,
+   * devices, or after clearing cookies, and will be reconnected to (or
+   * reissued) their lab.
+   */
+  ttlHours: z.number().int().min(1).max(8760).default(720),
   /** Friendly label visible in admin (e.g. "LTIM-DevOps-Cohort-7"). */
   label: z.string().min(1).max(120),
   /** Optional per-seat display names (length must match `count`). */

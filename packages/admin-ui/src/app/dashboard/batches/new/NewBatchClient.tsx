@@ -35,7 +35,7 @@ export function NewBatchClient({ templates }: { templates: Template[] }) {
       label: String(formData.get('label') ?? '').trim(),
       count: Number(formData.get('count') ?? 1),
       durationMinutes: Number(formData.get('durationMinutes') ?? 120),
-      ttlHours: Number(formData.get('ttlHours') ?? 24),
+      ttlHours: Number(formData.get('ttlHours') ?? 720),
     };
 
     startTransition(async () => {
@@ -155,12 +155,16 @@ export function NewBatchClient({ templates }: { templates: Template[] }) {
             name="ttlHours"
             type="number"
             min={1}
-            max={168}
-            defaultValue={24}
+            max={8760}
+            defaultValue={720}
             required
             className="mt-1 w-full rounded-md border border-ink-200 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
           />
-          <p className="mt-1 text-xs text-ink-900/50">1–168h (7 days max).</p>
+          <p className="mt-1 text-xs text-ink-900/50">
+            How long the URL itself stays valid. Reusable within this window
+            — the student can revisit the same URL across days / devices.
+            Default 720h (30 days); max 8760h (1 year).
+          </p>
         </div>
       </div>
 
