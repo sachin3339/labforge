@@ -4,31 +4,115 @@
 
 :root {
   color-scheme: light;
+  --bg-page: #f8fafc;
+  --bg-app: #f1f5f9;
+}
+
+html,
+body {
+  height: 100%;
 }
 
 body {
   @apply bg-ink-50 text-ink-900 antialiased;
-  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  background-image:
+    radial-gradient(circle at 10% 0%, rgba(99, 102, 241, 0.05), transparent 40%),
+    radial-gradient(circle at 90% 20%, rgba(14, 165, 233, 0.04), transparent 35%);
+  background-attachment: fixed;
 }
 
+::selection {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+/* ----- Buttons ----- */
 .btn {
-  @apply inline-flex items-center justify-center rounded-md px-3 py-2 text-sm font-medium transition;
+  @apply inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150
+         focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40
+         disabled:cursor-not-allowed disabled:opacity-50;
 }
 .btn-primary {
-  @apply btn bg-brand-600 text-white hover:bg-brand-700;
+  @apply btn bg-brand-600 text-white shadow-card
+         hover:bg-brand-700 hover:shadow-elevated active:translate-y-[0.5px];
 }
 .btn-secondary {
-  @apply btn border border-ink-100 bg-white text-ink-900 hover:bg-ink-50;
+  @apply btn border border-ink-200 bg-white text-ink-800 shadow-card
+         hover:border-ink-300 hover:bg-ink-50 active:translate-y-[0.5px];
+}
+.btn-ghost {
+  @apply btn text-ink-700 hover:bg-ink-100;
 }
 .btn-danger {
-  @apply btn bg-red-600 text-white hover:bg-red-700;
+  @apply btn bg-red-600 text-white shadow-card hover:bg-red-700;
 }
-.input {
-  @apply w-full rounded-md border border-ink-100 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20;
+
+/* ----- Inputs ----- */
+.input,
+input[type='text'].input,
+input[type='date'].input,
+input[type='password'].input,
+input[type='number'].input,
+input[type='email'].input,
+select.input,
+textarea.input {
+  @apply w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm
+         text-ink-900 placeholder:text-ink-400 transition
+         focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25;
 }
+
+/* ----- Surfaces ----- */
 .card {
-  @apply rounded-lg border border-ink-100 bg-white p-5 shadow-sm;
+  @apply rounded-xl border border-ink-200/80 bg-white p-5 shadow-card;
 }
+.card-flat {
+  @apply rounded-xl border border-ink-200/70 bg-white p-5;
+}
+
+/* ----- Badges ----- */
 .badge {
-  @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium;
+}
+.badge-success {
+  @apply badge bg-emerald-100 text-emerald-800;
+}
+.badge-warn {
+  @apply badge bg-amber-100 text-amber-800;
+}
+.badge-info {
+  @apply badge bg-brand-100 text-brand-800;
+}
+.badge-muted {
+  @apply badge bg-ink-100 text-ink-700;
+}
+.badge-danger {
+  @apply badge bg-red-100 text-red-800;
+}
+
+/* ----- Tables ----- */
+.table-clean {
+  @apply w-full text-sm;
+}
+.table-clean thead {
+  @apply bg-ink-50/80 text-left text-[11px] uppercase tracking-[0.06em] text-ink-500;
+}
+.table-clean th {
+  @apply px-3 py-2 font-medium;
+}
+.table-clean tbody tr {
+  @apply border-t border-ink-100;
+}
+.table-clean tbody tr:hover {
+  @apply bg-ink-50/60;
+}
+.table-clean td {
+  @apply px-3 py-2;
+}
+
+/* ----- Utility ----- */
+.kbd {
+  @apply rounded border border-ink-200 bg-white px-1.5 py-0.5 font-mono text-[10px] text-ink-700 shadow-sm;
+}
+.text-mono {
+  @apply font-mono;
 }
