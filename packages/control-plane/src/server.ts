@@ -12,6 +12,7 @@ import { redeemRoutes } from './routes/redeem.js';
 import { internalRoutes } from './routes/internal.js';
 import { adminRoutes } from './routes/admin.js';
 import { gradingRoutes } from './routes/grading.js';
+import { reportRoutes } from './routes/reports.js';
 import { startPrewarmLoop, stopPrewarmLoop } from './prewarm.js';
 import { startReaperLoop, stopReaperLoop } from './reaper.js';
 import { registerWildcardProxy } from './wildcardProxy.js';
@@ -56,6 +57,7 @@ await app.register(
     await scope.register(batchRoutes, { prefix: '/batches' });
     await scope.register(adminRoutes, { prefix: '/admin' });
     await scope.register(gradingRoutes, { prefix: '/grading' });
+    await scope.register(reportRoutes, { prefix: '/reports' });
   },
   { prefix: '/api/v1' },
 );

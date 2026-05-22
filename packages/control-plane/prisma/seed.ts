@@ -60,8 +60,9 @@ async function main() {
       // Whole home dir persists \u2014 carries dotfiles, extensions, npm cache,
       // and the project workspace itself.
       persistPaths: ['/home/coder'],
-      prewarm: 1,
-      grader: {
+      prewarm: 1,      // Cheap container; small framebuffer, low CPU. Sells as the entry tier.
+      costPerHourUsd: 0.015,
+      priceListUsd: 1.0,      grader: {
         passThreshold: 0.5,
         checks: [
           {
@@ -104,6 +105,8 @@ async function main() {
       prewarm: 0,
       shmSizeMb: 512,
       tmpfs: { '/tmp': 'size=512m' },
+      costPerHourUsd: 0.04,
+      priceListUsd: 2.5,
     },
   });
 
@@ -125,6 +128,8 @@ async function main() {
       prewarm: 0,
       shmSizeMb: 512,
       tmpfs: { '/tmp': 'size=512m' },
+      costPerHourUsd: 0.05,
+      priceListUsd: 3.0,
     },
   });
 
@@ -173,6 +178,9 @@ async function main() {
       devices: ['/dev/kvm', '/dev/net/tun'],
       capAdd: ['NET_ADMIN'],
       privileged: true,
+      // 6 vCPU + 8 GB RAM + KVM overhead — the most expensive template.
+      costPerHourUsd: 0.12,
+      priceListUsd: 6.0,
     },
   });
 
@@ -195,6 +203,8 @@ async function main() {
       workspaceDir: '/home/jovyan/work',
       persistPaths: ['/home/jovyan'],
       prewarm: 0,
+      costPerHourUsd: 0.03,
+      priceListUsd: 2.0,
     },
   });
 
@@ -214,6 +224,8 @@ async function main() {
       workspaceDir: '/root',
       persistPaths: ['/root'],
       prewarm: 2,
+      costPerHourUsd: 0.008,
+      priceListUsd: 0.5,
     },
   });
 

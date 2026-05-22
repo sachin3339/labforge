@@ -64,6 +64,24 @@ export const LabTemplateSpec = z.object({
    */
   privileged: z.boolean().default(false),
 
+  // ---- Pricing (powers the admin Cost & Margin report) ----
+
+  /**
+   * Estimated infrastructure cost of running ONE instance of this template
+   * for ONE hour, in USD. Used to compute total cost in reports.
+   *   - vscode-node, ubuntu-terminal: ~0.01-0.02
+   *   - desktop (kasm/selkies):       ~0.03-0.05
+   *   - windows-11 VM (6 vCPU/8GB):   ~0.10-0.15
+   * Leave undefined to exclude this template from cost rollups.
+   */
+  costPerHourUsd: z.number().nonnegative().optional(),
+  /**
+   * List price per redeemed launch (revenue per student), in USD. Used to
+   * compute revenue and margin. Set per-template so different tiers
+   * (terminal, desktop, Windows VM) can carry different price points.
+   */
+  priceListUsd: z.number().nonnegative().optional(),
+
   /** Optional auto-grader. Runs inside the lab container on demand. */
   grader: z.optional(z.lazy(() => GraderSpec)),
 });
