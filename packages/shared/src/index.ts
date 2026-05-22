@@ -82,6 +82,15 @@ export const LabTemplateSpec = z.object({
    */
   priceListUsd: z.number().nonnegative().optional(),
 
+  /**
+   * Optional CMD override (docker `Cmd`). When set, replaces the image's
+   * default startup command. Use for fine-grained control like passing
+   * `--ServerApp.token=` to JupyterLab to disable token auth (the env-var
+   * route is unreliable across image versions). Each element becomes one
+   * argv slot.
+   */
+  command: z.array(z.string()).optional(),
+
   /** Optional auto-grader. Runs inside the lab container on demand. */
   grader: z.optional(z.lazy(() => GraderSpec)),
 });

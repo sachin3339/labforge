@@ -197,9 +197,24 @@ async function main() {
       cpu: 2,
       memoryMb: 2048,
       env: {
-        JUPYTER_TOKEN: '',
         JUPYTER_ENABLE_LAB: 'yes',
+        // docker-stacks honors JUPYTER_TOKEN at wrapper level too, but the
+        // explicit CLI flag below is what actually disables auth across
+        // image versions.
+        JUPYTER_TOKEN: '',
       },
+      // Bypass docker-stacks' random-token generation by passing the
+      // server args ourselves. Token + password both empty disables auth;
+      // disable_check_xsrf is required for the reverse-proxied subdomain
+      // (no Origin match between {sub}.lab.host and the iframe).
+      command: [
+        'start-notebook.py',
+        '--ServerApp.token=',
+        '--ServerApp.password=',
+        '--ServerApp.disable_check_xsrf=True',
+        '--ServerApp.allow_origin=*',
+        '--ServerApp.base_url=/',
+      ],
       workspaceDir: '/home/jovyan/work',
       persistPaths: ['/home/jovyan'],
       prewarm: 0,

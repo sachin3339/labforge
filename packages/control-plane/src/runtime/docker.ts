@@ -71,6 +71,7 @@ export class DockerRuntime implements LabRuntime {
       name,
       Image: spec.image,
       Env: env,
+      Cmd: spec.command && spec.command.length ? spec.command : undefined,
       Labels: {
         'labforge.instance': instanceId,
         'labforge.subdomain': subdomain,
