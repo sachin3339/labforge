@@ -1,0 +1,47 @@
+# Keep the Docker build context small and stable.
+# Without this file, EVERY build ships the full repo (incl. node_modules,
+# .next, .git) to the daemon → multi-GB transfers + busted layer cache.
+
+# VCS / IDE
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+
+# Installed/regenerated inside the image
+**/node_modules
+.pnpm-store
+**/dist
+**/.next
+**/.turbo
+**/.cache
+**/coverage
+**/*.tsbuildinfo
+
+# Logs / temp
+**/*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-error.log*
+**/tmp
+**/.tmp
+
+# Secrets / local env (never ship into the image context)
+.env
+.env.*
+!deploy/.env.prod.example
+deploy/.env.prod
+**/.env.local
+**/.env.development.local
+**/.env.production.local
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Compose / dockerignore meta (Dockerfiles themselves are intentionally NOT
+# excluded — BuildKit reads them from the context)
+**/docker-compose*.yml
+**/.dockerignore
