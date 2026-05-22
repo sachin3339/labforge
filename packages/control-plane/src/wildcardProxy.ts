@@ -67,6 +67,10 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     if (decision.injectAuth) {
       req.raw.headers.authorization = decision.injectAuth;
     }
+    app.log.info(
+      `[proxy] ${req.method} ${req.url} → ${decision.scheme}://${decision.upstream} ` +
+        `injectAuth=${decision.injectAuth ? 'yes' : 'no'}`,
+    );
     reply.hijack();
     proxy.web(req.raw, reply.raw, {
       target: `${decision.scheme}://${decision.upstream}`,
