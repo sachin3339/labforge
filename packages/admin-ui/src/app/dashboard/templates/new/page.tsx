@@ -20,6 +20,10 @@ async function create(formData: FormData) {
   const capAddRaw = String(formData.get('capAdd') ?? '').trim();
   const shmSizeMbRaw = String(formData.get('shmSizeMb') ?? '').trim();
   const privileged = formData.get('privileged') === 'on';
+  const costPerHourRaw = String(formData.get('costPerHourUsd') ?? '').trim();
+  const priceListRaw = String(formData.get('priceListUsd') ?? '').trim();
+  const costPerHourUsd = costPerHourRaw ? Number(costPerHourRaw) : undefined;
+  const priceListUsd = priceListRaw ? Number(priceListRaw) : undefined;
 
   const env: Record<string, string> = {};
   for (const line of envRaw.split(/\r?\n/)) {
