@@ -7,6 +7,7 @@ import { authenticateTenant } from '../auth/apiKey.js';
 import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { emitUsage } from '../metering.js';
+import { acquireInstance, resumeInstance, waitUntilReady } from '../orchestrator.js';
 
 export const launchRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
@@ -184,5 +185,100 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
     });
     const launchUrl = `${config.PUBLIC_API_URL}/launch/redeem?t=${encodeURIComponent(token)}`;
     return { launchId: id, launchUrl, expiresAt: expiresAt.toISOString() };
+  });
+
+  /**
+   * POST /api/v1/launches/:id/prepare
+   *
+   * Eagerly provisions (or resumes) the lab for this launch BEFORE the
+   * student clicks the URL. Use this to remove the cold-start wait when
+   * sharing URLs in advance. The launch is linked to the resulting
+   * instance but `redeemedAt` stays null (the student's first click still
+   * counts as the redemption for billing).
+   *
+   * Body: { waitSeconds?: number } — when >0, blocks until the upstream
+   * is reachable so the response only returns once the lab is truly
+   * student-ready. Defaults to 0 (return as soon as the row exists).
+   */
+  app.post('/:id/prepare', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ waitSeconds: z.number().int().min(0).max(120).optional() })
+      .safeParse(req.body ?? {});
+    if (!body.success) {
+      reply.code(400);
+      return { error: 'invalid_body', issues: body.error.issues };
+    }
+    const waitSeconds = body.data.waitSeconds ?? 0;
+
+    const launch = await prisma.launch.findFirst({
+      where: { id, tenantId: tenant.id },
+      include: { template: true, instance: true },
+    });
+    if (!launch) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    if (launch.expiresAt.getTime() <= Date.now()) {
+      reply.code(410);
+      return { error: 'launch_expired' };
+    }
+
+    let instance = launch.instance;
+    const reusable =
+      instance &&
+      ['pending', 'provisioning', 'ready', 'idle', 'paused'].includes(
+        instance.status,
+      );
+    if (!reusable) {
+      try {
+        instance = await acquireInstance({
+          tenantId: launch.tenantId,
+          template: launch.template,
+          userIdHash: launch.userIdHash,
+          durationMinutes: launch.durationMinutes,
+          expiresAt: launch.expiresAt,
+        });
+      } catch (err) {
+        reply.code(500);
+        return { error: 'provision_failed', detail: (err as Error).message };
+      }
+      await prisma.launch.update({
+        where: { id: launch.id },
+        data: { instanceId: instance.id },
+      });
+    } else if (instance!.status === 'paused' && instance!.runtimeId) {
+      try {
+        instance = await resumeInstance(instance!.id, {
+          waitMs: waitSeconds * 1000,
+        });
+      } catch (err) {
+        reply.code(503);
+        return { error: 'resume_failed', detail: (err as Error).message };
+      }
+    }
+
+    let ready = instance!.status === 'ready' || instance!.status === 'idle';
+    if (waitSeconds > 0 && instance!.runtimeId && instance!.upstream && !ready) {
+      ready = await waitUntilReady(
+        instance!.runtimeId,
+        instance!.upstream,
+        waitSeconds * 1000,
+      );
+      if (ready) {
+        instance = await prisma.labInstance.findUniqueOrThrow({
+          where: { id: instance!.id },
+        });
+      }
+    }
+
+    return {
+      launchId: launch.id,
+      instanceId: instance!.id,
+      subdomain: instance!.subdomain,
+      status: instance!.status,
+      ready,
+    };
   });
 };

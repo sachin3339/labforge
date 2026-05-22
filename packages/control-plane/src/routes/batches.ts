@@ -13,6 +13,7 @@ import { authenticateTenant } from '../auth/apiKey.js';
 import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { destroyInstance } from '../orchestrator.js';
+import { acquireInstance, resumeInstance } from '../orchestrator.js';
 
 /**
  * Admin-issued bulk launch URLs. One call → N single-use, long-lived
@@ -455,5 +456,92 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
       }),
     );
     return { batchId, added: items.length, launches: items };
+  });
+
+  /**
+   * POST /api/v1/batches/:batchId/prepare
+   *
+   * Bulk-warm every seat in a batch so that when students click their
+   * URLs they hit a ready upstream instead of waiting on cold provision.
+   * Body: { concurrency?: 1..20 } controls how many provisions run in
+   * parallel (default 5). Returns counts only; per-seat status is in the
+   * regular GET /batches/:batchId.
+   *
+   * Idempotent — seats that already have a live instance are skipped;
+   * paused instances are resumed.
+   */
+  app.post('/:batchId/prepare', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { batchId } = req.params as { batchId: string };
+    const body = z
+      .object({ concurrency: z.number().int().min(1).max(20).optional() })
+      .safeParse(req.body ?? {});
+    if (!body.success) {
+      reply.code(400);
+      return { error: 'invalid_body', issues: body.error.issues };
+    }
+    const concurrency = body.data.concurrency ?? 5;
+
+    const launches = await prisma.launch.findMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+        expiresAt: { gt: new Date() },
+      },
+      include: { template: true, instance: true },
+    });
+    if (launches.length === 0) {
+      reply.code(404);
+      return { error: 'batch_not_found' };
+    }
+
+    let prepared = 0;
+    let resumed = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    // Bounded-concurrency worker pool — Promise.all on 50 launches would
+    // hammer Docker. A small fixed pool keeps the host responsive.
+    const queue = [...launches];
+    async function worker() {
+      while (queue.length) {
+        const l = queue.shift();
+        if (!l) return;
+        try {
+          if (l.instance && ['ready', 'idle', 'provisioning', 'pending'].includes(l.instance.status)) {
+            skipped += 1;
+            continue;
+          }
+          if (l.instance && l.instance.status === 'paused' && l.instance.runtimeId) {
+            await resumeInstance(l.instance.id);
+            resumed += 1;
+            continue;
+          }
+          const inst = await acquireInstance({
+            tenantId: l.tenantId,
+            template: l.template,
+            userIdHash: l.userIdHash,
+            durationMinutes: l.durationMinutes,
+            expiresAt: l.expiresAt,
+          });
+          await prisma.launch.update({
+            where: { id: l.id },
+            data: { instanceId: inst.id },
+          });
+          prepared += 1;
+        } catch (err) {
+          app.log.warn(
+            { err: (err as Error).message, launchId: l.id },
+            '[batches] prepare failed',
+          );
+          failed += 1;
+        }
+      }
+    }
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, launches.length) }, () => worker()),
+    );
+
+    return { batchId, total: launches.length, prepared, resumed, skipped, failed };
   });
 };

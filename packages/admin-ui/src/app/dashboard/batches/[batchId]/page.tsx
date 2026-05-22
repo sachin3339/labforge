@@ -7,6 +7,8 @@ import {
   extendBatchAction,
   terminateBatchAction,
   addSeatsAction,
+  prepareLaunchAction,
+  prepareBatchAction,
 } from './actions';
 
 type BatchDetail = {
@@ -130,7 +132,30 @@ export default async function BatchDetailPage({
         </div>
       )}
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <form action={prepareBatchAction} className="card space-y-2">
+          <h3 className="text-sm font-semibold">Prepare all seats</h3>
+          <input type="hidden" name="batchId" value={batchId} />
+          <label className="flex items-center gap-2 text-xs">
+            Concurrency
+            <input
+              type="number"
+              name="concurrency"
+              defaultValue={5}
+              min={1}
+              max={20}
+              className="w-24 rounded border border-ink-200 px-2 py-1"
+            />
+          </label>
+          <p className="text-[10px] text-ink-900/50">
+            Pre-provisions every seat so students hit a warm lab. Skips seats
+            already live; resumes paused ones.
+          </p>
+          <button type="submit" className="btn-secondary text-xs">
+            Prepare batch
+          </button>
+        </form>
+
         <form action={extendBatchAction} className="card space-y-2">
           <h3 className="text-sm font-semibold">Extend batch</h3>
           <input type="hidden" name="batchId" value={batchId} />
@@ -244,6 +269,26 @@ export default async function BatchDetailPage({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap items-center justify-end gap-1">
+                      {(!s.instance ||
+                        ['terminated', 'failed', 'paused'].includes(
+                          s.instance.status,
+                        )) && (
+                        <form action={prepareLaunchAction}>
+                          <input type="hidden" name="launchId" value={s.launchId} />
+                          <input type="hidden" name="batchId" value={batchId} />
+                          <button
+                            type="submit"
+                            className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-100"
+                            title={
+                              s.instance?.status === 'paused'
+                                ? 'Resume the paused container so students hit a warm lab.'
+                                : 'Pre-provision the lab so the student does not wait on cold start.'
+                            }
+                          >
+                            {s.instance?.status === 'paused' ? 'Resume' : 'Prepare'}
+                          </button>
+                        </form>
+                      )}
                       <form action={revokeLaunchAction}>
                         <input type="hidden" name="launchId" value={s.launchId} />
                         <input type="hidden" name="batchId" value={batchId} />

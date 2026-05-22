@@ -7,6 +7,38 @@ import { setFlash } from '@/lib/flash';
 
 // ----- Per-launch (seat) actions -----
 
+export async function prepareLaunchAction(formData: FormData) {
+  const launchId = String(formData.get('launchId') ?? '');
+  const batchId = String(formData.get('batchId') ?? '');
+  if (!launchId || !batchId) return;
+  const res = await apiFetch<{
+    launchId: string;
+    instanceId: string;
+    status: string;
+    ready: boolean;
+  }>(`/api/v1/launches/${launchId}/prepare`, {
+    method: 'POST',
+    body: JSON.stringify({ waitSeconds: 0 }),
+  });
+  if (!res.ok) {
+    await setFlash({
+      kind: 'batch-error',
+      data: { message: `Prepare failed: ${res.error}` },
+    });
+  } else {
+    await setFlash({
+      kind: 'batch-info',
+      data: {
+        message: `Seat prepared. Instance status: ${res.data.status}${
+          res.data.ready ? ' (ready)' : ' — warming up…'
+        }`,
+      },
+    });
+  }
+  revalidatePath(`/dashboard/batches/${batchId}`);
+  redirect(`/dashboard/batches/${batchId}`);
+}
+
 export async function revokeLaunchAction(formData: FormData) {
   const launchId = String(formData.get('launchId') ?? '');
   const batchId = String(formData.get('batchId') ?? '');
@@ -108,6 +140,33 @@ export async function terminateBatchAction(formData: FormData) {
       message: res.ok
         ? `Terminated ${res.data.terminated} live instances. Revoked ${res.data.revoked} seat URLs.`
         : `Terminate failed: ${res.error}`,
+    },
+  });
+  revalidatePath(`/dashboard/batches/${batchId}`);
+  redirect(`/dashboard/batches/${batchId}`);
+}
+
+export async function prepareBatchAction(formData: FormData) {
+  const batchId = String(formData.get('batchId') ?? '');
+  const concurrency = Number(formData.get('concurrency') ?? '5');
+  if (!batchId) return;
+  const res = await apiFetch<{
+    batchId: string;
+    total: number;
+    prepared: number;
+    resumed: number;
+    skipped: number;
+    failed: number;
+  }>(`/api/v1/batches/${batchId}/prepare`, {
+    method: 'POST',
+    body: JSON.stringify({ concurrency: Number.isFinite(concurrency) ? concurrency : 5 }),
+  });
+  await setFlash({
+    kind: res.ok ? 'batch-info' : 'batch-error',
+    data: {
+      message: res.ok
+        ? `Prepare run: ${res.data.prepared} provisioned, ${res.data.resumed} resumed, ${res.data.skipped} already live, ${res.data.failed} failed (of ${res.data.total}).`
+        : `Prepare all failed: ${res.error}`,
     },
   });
   revalidatePath(`/dashboard/batches/${batchId}`);
