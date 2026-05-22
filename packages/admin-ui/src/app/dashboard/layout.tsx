@@ -3,16 +3,7 @@ import { redirect } from 'next/navigation';
 import { ReactNode } from 'react';
 import { ADMIN_COOKIE_NAME, apiFetch } from '@/lib/api';
 import { SidebarNav } from '@/components/sidebar-nav';
-import {
-  IconHome,
-  IconTemplate,
-  IconUsers,
-  IconServer,
-  IconChart,
-  IconSettings,
-  IconLogout,
-  IconBolt,
-} from '@/components/icons';
+import { IconLogout, IconBolt } from '@/components/icons';
 
 type Me = { tenant: { id: string; name: string } };
 
@@ -22,15 +13,6 @@ async function signOut() {
   store.delete(ADMIN_COOKIE_NAME);
   redirect('/login');
 }
-
-const navItems = [
-  { href: '/dashboard', label: 'Overview', Icon: IconHome },
-  { href: '/dashboard/templates', label: 'Templates', Icon: IconTemplate },
-  { href: '/dashboard/batches', label: 'Batches', Icon: IconUsers },
-  { href: '/dashboard/instances', label: 'Live labs', Icon: IconServer },
-  { href: '/dashboard/reports', label: 'Reports', Icon: IconChart },
-  { href: '/dashboard/settings', label: 'Settings', Icon: IconSettings },
-];
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   const me = await apiFetch<Me>('/api/v1/admin/me');
@@ -54,7 +36,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           </div>
         </div>
 
-        <SidebarNav items={navItems} />
+        <SidebarNav />
 
         <div className="border-t border-ink-200/70 p-3">
           <div className="flex items-center gap-3 rounded-lg px-2 py-2">

@@ -2,12 +2,25 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ComponentType } from 'react';
+import {
+  IconHome,
+  IconTemplate,
+  IconUsers,
+  IconServer,
+  IconChart,
+  IconSettings,
+} from './icons';
 
-type IconProps = { size?: number; className?: string };
-type Item = { href: string; label: string; Icon: ComponentType<IconProps> };
+const items = [
+  { href: '/dashboard', label: 'Overview', Icon: IconHome },
+  { href: '/dashboard/templates', label: 'Templates', Icon: IconTemplate },
+  { href: '/dashboard/batches', label: 'Batches', Icon: IconUsers },
+  { href: '/dashboard/instances', label: 'Live labs', Icon: IconServer },
+  { href: '/dashboard/reports', label: 'Reports', Icon: IconChart },
+  { href: '/dashboard/settings', label: 'Settings', Icon: IconSettings },
+];
 
-export function SidebarNav({ items }: { items: Item[] }) {
+export function SidebarNav() {
   const pathname = usePathname() || '';
 
   return (
