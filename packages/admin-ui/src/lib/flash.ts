@@ -36,10 +36,22 @@ export async function consumeFlash<T = unknown>(
   try {
     parsed = JSON.parse(raw);
   } catch {
-    store.delete(COOKIE);
+    safeDelete(store);
     return null;
   }
   if (parsed.kind !== kind) return null;
-  store.delete(COOKIE);
+  safeDelete(store);
   return parsed.data as T;
+}
+
+// Cookie mutation is only legal inside a Server Action or Route Handler. When
+// `consumeFlash` is called from a Server Component render (the common case),
+// the delete throws and crashes the whole page. Swallow it — the cookie has
+// a 5-minute TTL and gets overwritten on the next flash anyway.
+function safeDelete(store: Awaited<ReturnType<typeof cookies>>): void {
+  try {
+    store.delete(COOKIE);
+  } catch {
+    // ignored: cannot mutate cookies during render
+  }
 }
