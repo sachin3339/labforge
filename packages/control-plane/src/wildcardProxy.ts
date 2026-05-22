@@ -35,7 +35,12 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     if (typeof auth === 'string' && auth.length > 0) {
       proxyReq.setHeader('authorization', auth);
       proxyReq.removeHeader('x-labforge-inject-auth');
-      app.log.info(`[proxy] proxyReq injected Authorization (len=${auth.length})`);
+      const sent = proxyReq.getHeader('authorization');
+      app.log.info(
+        `[proxy] proxyReq injected Authorization (len=${auth.length}, ` +
+          `present-after-set=${sent ? 'yes' : 'no'}, ` +
+          `all-headers=${Object.keys(proxyReq.getHeaders()).join(',')})`,
+      );
     } else {
       app.log.info(`[proxy] proxyReq saw NO injectAuth header (keys=${Object.keys((req as IncomingMessage).headers).join(',')})`);
     }
