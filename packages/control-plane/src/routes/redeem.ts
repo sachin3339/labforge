@@ -9,6 +9,7 @@ import {
   waitUntilReady,
 } from '../orchestrator.js';
 import { config } from '../config.js';
+import { warmingUpHtml } from '../ui/warmingPage.js';
 
 const Query = z.object({ t: z.string().min(10) });
 
@@ -179,54 +180,4 @@ function parentDomain(domain: string): string {
   const parts = domain.split('.');
   if (parts.length <= 1) return domain;
   return '.' + parts.slice(1).join('.');
-}
-
-/**
- * Branded "warming up" page. Auto-refreshes every 4s; the redirect happens
- * once the upstream is reachable. Stays HTML/200-ish so the browser doesn't
- * surface a scary error to the student.
- */
-function warmingUpHtml(templateName: string): string {
-  const safe = templateName.replace(/[<>&"']/g, '');
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="refresh" content="4" />
-  <title>Starting your lab… — LabForge</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-      display: grid; place-items: center; min-height: 100vh; margin: 0;
-      background: #0f172a; color: #e2e8f0;
-    }
-    .card {
-      max-width: 480px; padding: 2.5rem; text-align: center;
-      background: #1e293b; border: 1px solid #334155; border-radius: 12px;
-      box-shadow: 0 10px 30px rgba(0,0,0,0.4);
-    }
-    h1 { font-size: 1.25rem; margin: 0 0 0.5rem; font-weight: 600; }
-    p { color: #94a3b8; margin: 0.25rem 0; font-size: 0.9rem; }
-    .spinner {
-      width: 36px; height: 36px; margin: 0 auto 1.5rem;
-      border: 3px solid #334155; border-top-color: #38bdf8; border-radius: 50%;
-      animation: spin 0.9s linear infinite;
-    }
-    .tmpl { color: #38bdf8; font-weight: 500; }
-    @keyframes spin { to { transform: rotate(360deg); } }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="spinner"></div>
-    <h1>Starting your <span class="tmpl">${safe}</span> lab</h1>
-    <p>This usually takes a few seconds.</p>
-    <p>Windows labs can take up to a minute to wake up.</p>
-    <p style="margin-top: 1.25rem; font-size: 0.75rem; opacity: 0.6;">
-      This page refreshes automatically.
-    </p>
-  </div>
-</body>
-</html>`;
 }
