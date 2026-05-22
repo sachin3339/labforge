@@ -1,12 +1,36 @@
-import { redirect } from 'next/navigation';
+import { redirect, notFound } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 
-async function create(formData: FormData) {
+type TemplateSpec = {
+  image: string;
+  runtime: string;
+  port: number;
+  cpu: number;
+  memoryMb: number;
+  env?: Record<string, string>;
+  workspaceDir?: string;
+  prewarm?: number;
+  devices?: string[];
+  capAdd?: string[];
+  shmSizeMb?: number;
+  privileged?: boolean;
+  costPerHourUsd?: number;
+  priceListUsd?: number;
+  grader?: unknown;
+};
+
+type Template = {
+  id: string;
+  name: string;
+  description: string | null;
+  spec: TemplateSpec;
+};
+
+async function update(templateId: string, formData: FormData) {
   'use server';
-  const name = String(formData.get('name') ?? '').trim();
-  const description = String(formData.get('description') ?? '').trim() || undefined;
+  const description = String(formData.get('description') ?? '').trim() || null;
   const image = String(formData.get('image') ?? '').trim();
   const runtime = String(formData.get('runtime') ?? 'code-server').trim();
   const port = Number(formData.get('port') ?? 8080);
@@ -20,18 +44,18 @@ async function create(formData: FormData) {
   const capAddRaw = String(formData.get('capAdd') ?? '').trim();
   const shmSizeMbRaw = String(formData.get('shmSizeMb') ?? '').trim();
   const privileged = formData.get('privileged') === 'on';
+  const costPerHourRaw = String(formData.get('costPerHourUsd') ?? '').trim();
+  const priceListRaw = String(formData.get('priceListUsd') ?? '').trim();
+  const costPerHourUsd = costPerHourRaw ? Number(costPerHourRaw) : undefined;
+  const priceListUsd = priceListRaw ? Number(priceListRaw) : undefined;
 
   const env: Record<string, string> = {};
   for (const line of envRaw.split(/\r?\n/)) {
     const [k, ...rest] = line.split('=');
     if (k && rest.length) env[k.trim()] = rest.join('=').trim();
   }
-  const devices = devicesRaw
-    ? devicesRaw.split(/[,\s]+/).filter(Boolean)
-    : [];
-  const capAdd = capAddRaw
-    ? capAddRaw.split(/[,\s]+/).filter(Boolean)
-    : [];
+  const devices = devicesRaw ? devicesRaw.split(/[,\s]+/).filter(Boolean) : [];
+  const capAdd = capAddRaw ? capAddRaw.split(/[,\s]+/).filter(Boolean) : [];
   const shmSizeMb = shmSizeMbRaw ? Number(shmSizeMbRaw) : undefined;
 
   let grader: unknown = undefined;
@@ -39,14 +63,15 @@ async function create(formData: FormData) {
     try {
       grader = JSON.parse(graderRaw);
     } catch {
-      redirect(`/dashboard/templates/new?error=${encodeURIComponent('invalid_grader_json')}`);
+      redirect(
+        `/dashboard/templates/${templateId}/edit?error=${encodeURIComponent('invalid_grader_json')}`,
+      );
     }
   }
 
-  const res = await apiFetch('/api/v1/templates', {
-    method: 'POST',
+  const res = await apiFetch(`/api/v1/templates/${templateId}`, {
+    method: 'PATCH',
     body: JSON.stringify({
-      name,
       description,
       spec: {
         image,
@@ -68,25 +93,47 @@ async function create(formData: FormData) {
     }),
   });
   if (!res.ok) {
-    redirect(`/dashboard/templates/new?error=${encodeURIComponent(res.error)}`);
+    redirect(
+      `/dashboard/templates/${templateId}/edit?error=${encodeURIComponent(res.error)}`,
+    );
   }
   revalidatePath('/dashboard/templates');
   redirect('/dashboard/templates');
 }
 
-export default async function NewTemplatePage({
+export default async function EditTemplatePage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ id: string }>;
   searchParams: Promise<{ error?: string }>;
 }) {
+  const { id } = await params;
   const { error } = await searchParams;
+  const res = await apiFetch<Template>(`/api/v1/templates/${id}`);
+  if (!res.ok) {
+    if (res.status === 404) notFound();
+    return <div className="text-red-600">Error: {res.error}</div>;
+  }
+  const t = res.data;
+  const s = t.spec;
+  const envString = s.env
+    ? Object.entries(s.env)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n')
+    : '';
+  const devicesString = (s.devices ?? []).join(', ');
+  const capAddString = (s.capAdd ?? []).join(', ');
+  const graderString = s.grader ? JSON.stringify(s.grader, null, 2) : '';
+
   return (
     <div className="space-y-6">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold">New template</h1>
+          <h1 className="text-2xl font-semibold">Edit template</h1>
           <p className="text-sm text-ink-900/60">
-            Define one kind of lab environment.
+            <span className="font-mono">{t.name}</span> — name is immutable;
+            edit description and spec.
           </p>
         </div>
         <Link href="/dashboard/templates" className="btn-secondary">
@@ -100,137 +147,125 @@ export default async function NewTemplatePage({
         </div>
       )}
 
-      <form action={create} className="card space-y-5">
-        <Field label="Name" hint="lowercase letters, digits, hyphens">
-          <input
-            name="name"
-            className="input font-mono"
-            required
-            pattern="[a-z0-9-]+"
-            placeholder="vscode-python"
-          />
-        </Field>
+      <form action={update.bind(null, t.id)} className="card space-y-5">
         <Field label="Description">
           <input
             name="description"
             className="input"
+            defaultValue={t.description ?? ''}
             placeholder="Python 3 dev environment with VS Code"
           />
         </Field>
-        <Field label="Container image" hint="must be pullable by the runtime">
+        <Field label="Container image">
           <input
             name="image"
             className="input font-mono"
             required
-            placeholder="codercom/code-server:latest"
+            defaultValue={s.image}
           />
         </Field>
-        <Field label="Lab kind" hint="picks how the browser talks to the lab">
-          <select name="runtime" className="input" defaultValue="code-server">
+        <Field label="Lab kind">
+          <select name="runtime" className="input" defaultValue={s.runtime}>
             <option value="code-server">code-server (VS Code web)</option>
             <option value="jupyter">Jupyter Lab</option>
             <option value="terminal">Terminal only (ttyd)</option>
             <option value="linux-desktop">Linux desktop (KasmVNC)</option>
-            <option value="vm">VM (Windows / QEMU-in-container — needs KVM host)</option>
+            <option value="vm">VM (Windows / QEMU-in-container)</option>
           </select>
         </Field>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Field label="Port">
-            <input name="port" type="number" className="input" defaultValue={8080} required />
+            <input name="port" type="number" className="input" defaultValue={s.port} required />
           </Field>
           <Field label="vCPU">
-            <input name="cpu" type="number" step="0.25" className="input" defaultValue={1} required />
+            <input name="cpu" type="number" step="0.25" className="input" defaultValue={s.cpu} required />
           </Field>
           <Field label="Memory (MB)">
-            <input name="memoryMb" type="number" className="input" defaultValue={1024} required />
+            <input name="memoryMb" type="number" className="input" defaultValue={s.memoryMb} required />
           </Field>
           <Field label="Prewarm">
-            <input name="prewarm" type="number" className="input" defaultValue={0} />
+            <input name="prewarm" type="number" className="input" defaultValue={s.prewarm ?? 0} />
           </Field>
         </div>
         <Field label="Workspace dir (optional)">
-          <input name="workspaceDir" className="input font-mono" placeholder="/home/coder/project" />
-        </Field>
-        <Field label="Env vars" hint="one KEY=VALUE per line">
-          <textarea
-            name="env"
-            className="input h-24 font-mono"
-            placeholder="PASSWORD=labforge"
+          <input
+            name="workspaceDir"
+            className="input font-mono"
+            defaultValue={s.workspaceDir ?? ''}
           />
         </Field>
+        <Field label="Env vars" hint="one KEY=VALUE per line">
+          <textarea name="env" className="input h-24 font-mono" defaultValue={envString} />
+        </Field>
 
-        <details className="rounded-md border border-ink-100 bg-ink-50/40 px-4 py-3">
+        <details
+          className="rounded-md border border-ink-100 bg-ink-50/40 px-4 py-3"
+          open={Boolean(devicesString || capAddString || s.shmSizeMb || s.privileged)}
+        >
           <summary className="cursor-pointer text-sm font-medium">
-            Advanced: devices, capabilities, shm (desktops & VMs)
+            Advanced: devices, capabilities, shm
           </summary>
           <div className="mt-4 space-y-4">
-            <Field
-              label="Host devices"
-              hint="comma-separated, e.g. /dev/kvm — required for VM kind"
-            >
+            <Field label="Host devices" hint="comma-separated">
               <input
                 name="devices"
                 className="input font-mono"
-                placeholder="/dev/kvm"
+                defaultValue={devicesString}
               />
             </Field>
-            <Field label="Add capabilities" hint="comma-separated, e.g. NET_ADMIN">
-              <input name="capAdd" className="input font-mono" placeholder="NET_ADMIN" />
+            <Field label="Add capabilities" hint="comma-separated">
+              <input name="capAdd" className="input font-mono" defaultValue={capAddString} />
             </Field>
             <div className="grid grid-cols-2 gap-4">
-              <Field label="Shared memory (MB)" hint="Chromium-based desktops need ≥256">
+              <Field label="Shared memory (MB)">
                 <input
                   name="shmSizeMb"
                   type="number"
                   className="input"
-                  placeholder="512"
+                  defaultValue={s.shmSizeMb ?? ''}
                 />
               </Field>
               <label className="flex items-end gap-2 pb-2 text-sm">
-                <input type="checkbox" name="privileged" className="h-4 w-4" />
-                <span>Run privileged (gated by host config)</span>
+                <input
+                  type="checkbox"
+                  name="privileged"
+                  className="h-4 w-4"
+                  defaultChecked={s.privileged === true}
+                />
+                <span>Run privileged</span>
               </label>
             </div>
           </div>
         </details>
 
         <div className="grid grid-cols-2 gap-4">
-          <Field
-            label="Cost per hour (USD)"
-            hint="your infra cost; used for cost reports"
-          >
+          <Field label="Cost per hour (USD)" hint="your infra cost">
             <input
               name="costPerHourUsd"
               type="number"
               step="0.001"
               min={0}
               className="input"
-              placeholder="0.04"
+              defaultValue={s.costPerHourUsd ?? ''}
             />
           </Field>
-          <Field
-            label="List price per redemption (USD)"
-            hint="your revenue per student session; used for margin reports"
-          >
+          <Field label="List price per redemption (USD)" hint="your revenue">
             <input
               name="priceListUsd"
               type="number"
               step="0.01"
               min={0}
               className="input"
-              placeholder="2.50"
+              defaultValue={s.priceListUsd ?? ''}
             />
           </Field>
         </div>
 
-        <Field
-          label="Grader (JSON, optional)"
-          hint='{ "passThreshold": 0.5, "checks": [{ "id":"test", "command":"npm test", "weight":1 }] }'
-        >
+        <Field label="Grader (JSON, optional)">
           <textarea
             name="grader"
             className="input h-40 font-mono text-xs"
-            placeholder={'{\n  "passThreshold": 0.5,\n  "checks": [\n    { "id": "node-ok", "command": "node -v", "weight": 1, "passExitCode": 0 }\n  ]\n}'}
+            defaultValue={graderString}
           />
         </Field>
         <div className="flex justify-end gap-2">
@@ -238,7 +273,7 @@ export default async function NewTemplatePage({
             Cancel
           </Link>
           <button className="btn-primary" type="submit">
-            Create template
+            Save changes
           </button>
         </div>
       </form>

@@ -14,6 +14,8 @@ type Template = {
     cpu: number;
     memoryMb: number;
     prewarm?: number;
+    costPerHourUsd?: number;
+    priceListUsd?: number;
   };
   createdAt: string;
 };
@@ -74,6 +76,7 @@ export default async function TemplatesPage() {
                 <th className="px-4 py-3">Image</th>
                 <th className="px-4 py-3">Resources</th>
                 <th className="px-4 py-3">Prewarm</th>
+                <th className="px-4 py-3">Pricing</th>
                 <th className="px-4 py-3"></th>
               </tr>
             </thead>
@@ -91,10 +94,30 @@ export default async function TemplatesPage() {
                     {t.spec.cpu} vCPU · {t.spec.memoryMb} MB
                   </td>
                   <td className="px-4 py-3 text-xs">{t.spec.prewarm ?? 0}</td>
+                  <td className="px-4 py-3 text-xs">
+                    {t.spec.costPerHourUsd !== undefined || t.spec.priceListUsd !== undefined ? (
+                      <div className="space-y-0.5">
+                        <div className="text-ink-900/60">
+                          cost: ${t.spec.costPerHourUsd?.toFixed(3) ?? '—'}/h
+                        </div>
+                        <div className="font-medium">
+                          list: ${t.spec.priceListUsd?.toFixed(2) ?? '—'}
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-ink-900/40">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right">
+                    <Link
+                      href={`/dashboard/templates/${t.id}/edit`}
+                      className="btn-secondary text-xs"
+                    >
+                      Edit
+                    </Link>
                     <form
                       action={launchTest.bind(null, t.id)}
-                      className="inline"
+                      className="ml-2 inline"
                     >
                       <button className="btn-primary text-xs" type="submit">
                         Launch test lab
