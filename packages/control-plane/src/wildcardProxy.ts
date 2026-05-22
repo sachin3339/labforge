@@ -26,6 +26,18 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     timeout: 60_000,
   });
 
+  // http-proxy emits this right before the outgoing request is sent. We use
+  // it to inject the Kasm HTTP-Basic header (placed on req.headers by the
+  // onRequest hook below). Setting via setHeader guarantees the header is
+  // on the ClientRequest, not just the source IncomingMessage.
+  proxy.on('proxyReq', (proxyReq, req) => {
+    const auth = (req as IncomingMessage).headers['x-labforge-inject-auth'];
+    if (typeof auth === 'string' && auth.length > 0) {
+      proxyReq.setHeader('authorization', auth);
+      proxyReq.removeHeader('x-labforge-inject-auth');
+    }
+  });
+
   proxy.on('error', (err, _req, res) => {
     app.log.warn({ err: err.message }, '[proxy] upstream error');
     const r = res as ServerResponse | undefined;
@@ -65,7 +77,7 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     }
 
     if (decision.injectAuth) {
-      req.raw.headers.authorization = decision.injectAuth;
+      req.raw.headers['x-labforge-inject-auth'] = decision.injectAuth;
     }
     app.log.info(
       `[proxy] ${req.method} ${req.url} → ${decision.scheme}://${decision.upstream} ` +
@@ -106,7 +118,7 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
         return;
       }
       if (decision.injectAuth) {
-        req.headers.authorization = decision.injectAuth;
+        req.headers['x-labforge-inject-auth'] = decision.injectAuth;
       }
       proxy.ws(req, socket, head, {
         target: `${decision.scheme}://${decision.upstream}`,
