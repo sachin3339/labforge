@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
+import { Prisma, InstanceStatus } from '@prisma/client';
 import { prisma } from '../db.js';
 import { authenticateTenant } from '../auth/apiKey.js';
 import type { LabTemplateSpec as LabTemplateSpecT } from '@labforge/shared';
@@ -26,8 +26,22 @@ const Window = z
     return { from, to };
   });
 
-const ACTIVE_STATUSES = ['pending', 'provisioning', 'ready', 'idle'];
-const LIVE_STATUSES = [...ACTIVE_STATUSES, 'paused'];
+const ACTIVE_STATUSES: InstanceStatus[] = [
+  InstanceStatus.pending,
+  InstanceStatus.provisioning,
+  InstanceStatus.ready,
+  InstanceStatus.idle,
+];
+const LIVE_STATUSES: InstanceStatus[] = [...ACTIVE_STATUSES, InstanceStatus.paused];
+
+/** Narrow Prisma's groupBy `_count` union so `._all` is always accessible. */
+function countAll(c: unknown): number {
+  if (c && typeof c === 'object' && '_all' in c) {
+    const v = (c as { _all?: number })._all;
+    return typeof v === 'number' ? v : 0;
+  }
+  return 0;
+}
 
 export const reportRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
@@ -122,9 +136,9 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
       }),
     ]);
 
-    const launchMap = new Map(launchAgg.map((r) => [r.templateId, r._count._all]));
-    const redeemMap = new Map(redeemAgg.map((r) => [r.templateId, r._count._all]));
-    const liveMap = new Map(liveByTemplate.map((r) => [r.templateId, r._count._all]));
+    const launchMap = new Map(launchAgg.map((r) => [r.templateId, countAll(r._count)]));
+    const redeemMap = new Map(redeemAgg.map((r) => [r.templateId, countAll(r._count)]));
+    const liveMap = new Map(liveByTemplate.map((r) => [r.templateId, countAll(r._count)]));
 
     const rows = templates
       .map((t) => {
@@ -440,7 +454,7 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
     return {
       tenantId: tenant.id,
       generatedAt: new Date().toISOString(),
-      byStatus: byStatus.map((r) => ({ status: r.status, count: r._count._all })),
+      byStatus: byStatus.map((r) => ({ status: r.status, count: countAll(r._count) })),
       runningCpu,
       runningMemMb,
       pausedDiskAllowanceMb,
