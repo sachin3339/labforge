@@ -94,7 +94,7 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     reply.hijack();
     proxy.web(req.raw, reply.raw, {
       target: `${decision.scheme}://${decision.upstream}`,
-      changeOrigin: false,
+      changeOrigin: true,
       secure: false,
     });
   });
@@ -130,7 +130,7 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
       }
       proxy.ws(req, socket, head, {
         target: `${decision.scheme}://${decision.upstream}`,
-        changeOrigin: false,
+        changeOrigin: true,
         secure: false,
       });
     })().catch((err) => {
