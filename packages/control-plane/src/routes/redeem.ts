@@ -68,9 +68,15 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const target = instanceUrl(instance.subdomain);
+    // Cookie must be settable by the redeem endpoint's host AND readable by
+    // the lab subdomain host. When redeem runs on api.<root> and labs live on
+    // *.lab.<root>, the cookie must be scoped to the common parent <root>,
+    // not to PUBLIC_LAB_DOMAIN (which would be a sibling subtree the redeem
+    // host is not allowed to set cookies on).
+    const cookieDomain = parentDomain(config.PUBLIC_LAB_DOMAIN);
     reply
       .setCookie('lf_session', sessionToken, {
-        domain: `.${config.PUBLIC_LAB_DOMAIN}`,
+        domain: cookieDomain,
         path: '/',
         httpOnly: true,
         secure: config.NODE_ENV === 'production',
@@ -80,3 +86,13 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
       .redirect(target, 302);
   });
 };
+
+/** "lab.environments.learnlytica.com" → ".environments.learnlytica.com"
+ *  "lab.localhost" → ".localhost"
+ *  "localhost" → "localhost" (single label — used as-is)
+ */
+function parentDomain(domain: string): string {
+  const parts = domain.split('.');
+  if (parts.length <= 1) return domain;
+  return '.' + parts.slice(1).join('.');
+}
