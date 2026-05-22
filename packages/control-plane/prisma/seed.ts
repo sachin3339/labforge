@@ -166,7 +166,26 @@ async function main() {
   // the container's volume; subsequent launches are fast.
   await prisma.labTemplate.upsert({
     where: { tenantId_name: { tenantId: tenant.id, name: 'windows-11' } },
-    update: {},
+    update: {
+      spec: {
+        image: 'dockurr/windows:latest',
+        runtime: 'vm',
+        port: 8006,
+        cpu: 4,
+        memoryMb: 8192,
+        env: {
+          VERSION: '11',
+          RAM_SIZE: '8G',
+          CPU_CORES: '4',
+          DISK_SIZE: '64G',
+        },
+        workspaceDir: 'C:\\Users\\Docker',
+        prewarm: 0,
+        devices: ['/dev/kvm', '/dev/net/tun'],
+        capAdd: ['NET_ADMIN'],
+        privileged: true,
+      },
+    },
     create: {
       tenantId: tenant.id,
       name: 'windows-11',
@@ -187,9 +206,12 @@ async function main() {
         },
         workspaceDir: 'C:\\Users\\Docker',
         prewarm: 0,
-        devices: ['/dev/kvm'],
+        devices: ['/dev/kvm', '/dev/net/tun'],
         capAdd: ['NET_ADMIN'],
-        privileged: false, // KVM device passthrough is enough on most hosts
+        // dockurr/windows runs nginx + qemu internally and needs full
+        // capabilities (chown, setuid in nginx) — KVM device passthrough
+        // alone isn't enough.
+        privileged: true,
       },
     },
   });
