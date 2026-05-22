@@ -10,6 +10,19 @@ import { apiFetch } from '@/lib/api';
  * table refreshes after the form post completes.
  */
 
+export async function openLaunchAction(formData: FormData) {
+  const launchId = String(formData.get('launchId') ?? '');
+  if (!launchId) return;
+  const res = await apiFetch<{ url: string }>(
+    `/api/v1/launches/${launchId}/preview-url`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    redirect(`/dashboard/instances?openErr=${encodeURIComponent(res.error)}`);
+  }
+  redirect(res.data.url);
+}
+
 export async function suspendAction(formData: FormData) {
   const id = String(formData.get('instanceId') ?? '');
   if (!id) return;

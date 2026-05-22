@@ -131,6 +131,7 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
           seat: Number(lctx.seat ?? i + 1),
           displayName: l.userDisplayName ?? `Seat ${i + 1}`,
           redeemed: l.redeemedAt?.toISOString() ?? null,
+          revoked: l.tokenJti === null,
           instance: l.instance,
         };
       }),

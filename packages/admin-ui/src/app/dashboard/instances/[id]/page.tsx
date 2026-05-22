@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { apiFetch } from '@/lib/api';
+import { SubmitButton } from '@/components/submit-button';
 import {
   suspendAction,
   resumeAction,
@@ -8,6 +9,7 @@ import {
   terminateAction,
   extendAction,
   gradeAction,
+  openLaunchAction,
 } from '../actions';
 
 type Instance = {
@@ -92,15 +94,17 @@ export default async function InstanceDetailPage({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <span className={`badge ${STATUS_TONE[i.status] ?? 'bg-ink-100'}`}>{i.status}</span>
             {i.isPrewarm && <span className="badge bg-indigo-100 text-indigo-800">prewarm</span>}
-            {i.url && (
-              <a
-                href={i.url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-brand hover:underline"
-              >
-                Open lab ↗
-              </a>
+            {i.launch && !['terminated', 'failed'].includes(i.status) && (
+              <form action={openLaunchAction}>
+                <input type="hidden" name="launchId" value={i.launch.id} />
+                <SubmitButton
+                  variant="primary"
+                  pendingLabel="Opening lab…"
+                  title="Open the lab (admin preview). Sets an admin session cookie."
+                >
+                  Open lab ↗
+                </SubmitButton>
+              </form>
             )}
           </div>
         </div>
@@ -170,12 +174,9 @@ export default async function InstanceDetailPage({
               className="w-20 rounded border border-ink-200 px-2 py-1"
             />
             <span className="text-ink-900/70">hours</span>
-            <button
-              type="submit"
-              className="rounded border border-ink-200 bg-white px-2 py-1 hover:bg-ink-50"
-            >
+            <SubmitButton variant="plain" pendingLabel="Extending…">
               Extend
-            </button>
+            </SubmitButton>
           </form>
         </div>
       </section>
@@ -195,12 +196,9 @@ export default async function InstanceDetailPage({
               <input type="checkbox" name="deleteVolume" value="1" />
               Also delete the volume (irreversible)
             </label>
-            <button
-              type="submit"
-              className="rounded border border-red-300 bg-red-50 px-3 py-1 text-red-700 hover:bg-red-100"
-            >
+            <SubmitButton variant="danger" pendingLabel="Terminating…">
               Terminate instance
-            </button>
+            </SubmitButton>
           </form>
         </section>
       )}
@@ -248,18 +246,14 @@ function ActionBtn({
   label: string;
   tone: 'primary' | 'secondary' | 'warning';
 }) {
-  const cls =
-    tone === 'primary'
-      ? 'bg-brand text-white hover:bg-brand/90 border-brand'
-      : tone === 'warning'
-        ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-        : 'bg-white text-ink-900/80 border-ink-200 hover:bg-ink-50';
+  const variant =
+    tone === 'primary' ? 'primary' : tone === 'warning' ? 'warning' : 'plain';
   return (
     <form action={action}>
       <input type="hidden" name="instanceId" value={id} />
-      <button type="submit" className={`rounded border px-3 py-1.5 text-xs ${cls}`}>
+      <SubmitButton variant={variant} pendingLabel={`${label}…`}>
         {label}
-      </button>
+      </SubmitButton>
     </form>
   );
 }

@@ -1,11 +1,13 @@
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
+import { SubmitButton } from '@/components/submit-button';
 import {
   suspendAction,
   resumeAction,
   restartAction,
   terminateAction,
   gradeAction,
+  openLaunchAction,
 } from './actions';
 
 type Instance = {
@@ -218,6 +220,18 @@ export default async function InstancesPage({
                     <td className="px-3 py-3 text-xs">{formatTime(i.expiresAt)}</td>
                     <td className="px-3 py-3">
                       <div className="flex flex-wrap items-center justify-end gap-1">
+                        {i.launch && !['terminated', 'failed'].includes(i.status) && (
+                          <form action={openLaunchAction}>
+                            <input type="hidden" name="launchId" value={i.launch.id} />
+                            <SubmitButton
+                              variant="success"
+                              pendingLabel="Opening…"
+                              title="Open this lab in a new tab (admin preview)."
+                            >
+                              Open
+                            </SubmitButton>
+                          </form>
+                        )}
                         {canSuspend && (
                           <RowButton
                             action={suspendAction}
@@ -253,13 +267,14 @@ export default async function InstancesPage({
                         {canTerminate && (
                           <form action={terminateAction}>
                             <input type="hidden" name="instanceId" value={i.id} />
-                            <button
-                              type="submit"
-                              className="rounded border border-red-300 bg-white px-2 py-1 text-xs text-red-700 hover:bg-red-50"
+                            <SubmitButton
+                              variant="plain"
+                              pendingLabel="Terminating…"
+                              className="border-red-300 text-red-700 hover:bg-red-50"
                               title="Stop and remove the container. Volume preserved."
                             >
                               Terminate
-                            </button>
+                            </SubmitButton>
                           </form>
                         )}
                       </div>
@@ -286,18 +301,14 @@ function RowButton({
   label: string;
   tone: 'primary' | 'secondary' | 'warning';
 }) {
-  const cls =
-    tone === 'primary'
-      ? 'bg-brand text-white hover:bg-brand/90 border-brand'
-      : tone === 'warning'
-        ? 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
-        : 'bg-white text-ink-900/80 border-ink-200 hover:bg-ink-50';
+  const variant =
+    tone === 'primary' ? 'primary' : tone === 'warning' ? 'warning' : 'plain';
   return (
     <form action={action}>
       <input type="hidden" name="instanceId" value={id} />
-      <button type="submit" className={`rounded border px-2 py-1 text-xs ${cls}`}>
+      <SubmitButton variant={variant} pendingLabel={`${label}…`}>
         {label}
-      </button>
+      </SubmitButton>
     </form>
   );
 }

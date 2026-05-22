@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 import { consumeFlash } from '@/lib/flash';
+import { SubmitButton } from '@/components/submit-button';
 import {
   revokeLaunchAction,
   regenerateLaunchAction,
@@ -9,6 +10,7 @@ import {
   addSeatsAction,
   prepareLaunchAction,
   prepareBatchAction,
+  openLaunchAction,
 } from './actions';
 
 type BatchDetail = {
@@ -23,6 +25,7 @@ type BatchDetail = {
     seat: number;
     displayName: string;
     redeemed: string | null;
+    revoked?: boolean;
     instance: {
       id: string;
       subdomain: string;
@@ -151,9 +154,9 @@ export default async function BatchDetailPage({
             Pre-provisions every seat so students hit a warm lab. Skips seats
             already live; resumes paused ones.
           </p>
-          <button type="submit" className="btn-secondary text-xs">
+          <SubmitButton variant="secondary" pendingLabel="Preparing batch…">
             Prepare batch
-          </button>
+          </SubmitButton>
         </form>
 
         <form action={extendBatchAction} className="card space-y-2">
@@ -174,9 +177,9 @@ export default async function BatchDetailPage({
             Does not re-sign JWTs. Long extensions past the original token
             window need <em>Regenerate</em> per seat.
           </p>
-          <button type="submit" className="btn-secondary text-xs">
+          <SubmitButton variant="secondary" pendingLabel="Extending…">
             Extend all seats
-          </button>
+          </SubmitButton>
         </form>
 
         <form action={addSeatsAction} className="card space-y-2">
@@ -196,9 +199,9 @@ export default async function BatchDetailPage({
           <p className="text-[10px] text-ink-900/50">
             New URLs are shown once after creation.
           </p>
-          <button type="submit" className="btn-secondary text-xs">
+          <SubmitButton variant="secondary" pendingLabel="Minting seats…">
             Mint seats
-          </button>
+          </SubmitButton>
         </form>
 
         <form action={terminateBatchAction} className="card space-y-2 border-red-200">
@@ -211,12 +214,12 @@ export default async function BatchDetailPage({
           <p className="text-[10px] text-ink-900/50">
             Stops every live lab and revokes all seat URLs.
           </p>
-          <button
-            type="submit"
-            className="rounded border border-red-300 bg-red-50 px-3 py-1 text-xs text-red-700 hover:bg-red-100"
+          <SubmitButton
+            variant="danger"
+            pendingLabel="Terminating…"
           >
             Terminate batch
-          </button>
+          </SubmitButton>
         </form>
       </section>
 
@@ -269,6 +272,19 @@ export default async function BatchDetailPage({
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap items-center justify-end gap-1">
+                      {!s.revoked && (
+                        <form action={openLaunchAction}>
+                          <input type="hidden" name="launchId" value={s.launchId} />
+                          <input type="hidden" name="batchId" value={batchId} />
+                          <SubmitButton
+                            variant="success"
+                            pendingLabel="Opening…"
+                            title="Open the lab in a new context (admin preview). Doesn't affect the student URL."
+                          >
+                            Open lab
+                          </SubmitButton>
+                        </form>
+                      )}
                       {(!s.instance ||
                         ['terminated', 'failed', 'paused'].includes(
                           s.instance.status,
@@ -276,9 +292,13 @@ export default async function BatchDetailPage({
                         <form action={prepareLaunchAction}>
                           <input type="hidden" name="launchId" value={s.launchId} />
                           <input type="hidden" name="batchId" value={batchId} />
-                          <button
-                            type="submit"
-                            className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs text-emerald-800 hover:bg-emerald-100"
+                          <SubmitButton
+                            variant="success"
+                            pendingLabel={
+                              s.instance?.status === 'paused'
+                                ? 'Resuming…'
+                                : 'Preparing…'
+                            }
                             title={
                               s.instance?.status === 'paused'
                                 ? 'Resume the paused container so students hit a warm lab.'
@@ -286,30 +306,30 @@ export default async function BatchDetailPage({
                             }
                           >
                             {s.instance?.status === 'paused' ? 'Resume' : 'Prepare'}
-                          </button>
+                          </SubmitButton>
                         </form>
                       )}
                       <form action={revokeLaunchAction}>
                         <input type="hidden" name="launchId" value={s.launchId} />
                         <input type="hidden" name="batchId" value={batchId} />
-                        <button
-                          type="submit"
-                          className="rounded border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-800 hover:bg-amber-100"
+                        <SubmitButton
+                          variant="warning"
+                          pendingLabel="Revoking…"
                           title="Revokes the launch URL. Already-redeemed students keep their session."
                         >
                           Revoke URL
-                        </button>
+                        </SubmitButton>
                       </form>
                       <form action={regenerateLaunchAction}>
                         <input type="hidden" name="launchId" value={s.launchId} />
                         <input type="hidden" name="batchId" value={batchId} />
-                        <button
-                          type="submit"
-                          className="rounded border border-ink-200 bg-white px-2 py-1 text-xs hover:bg-ink-50"
+                        <SubmitButton
+                          variant="plain"
+                          pendingLabel="Regenerating…"
                           title="Re-sign with new exp + jti. The old URL stops working. New URL shown once."
                         >
                           Regenerate
-                        </button>
+                        </SubmitButton>
                       </form>
                     </div>
                   </td>

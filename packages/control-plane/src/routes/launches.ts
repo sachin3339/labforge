@@ -281,4 +281,40 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
       ready,
     };
   });
+
+  /**
+   * POST /api/v1/launches/:id/preview-url
+   *
+   * Mints a short-lived redeem URL for admin preview / "open lab" buttons.
+   * Reuses the launch's existing `tokenJti` so the redeem check passes
+   * without modifying any DB row (the student's distributed URL keeps
+   * working). Returns 409 if the launch was revoked.
+   */
+  app.post('/:id/preview-url', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { id } = req.params as { id: string };
+    const launch = await prisma.launch.findFirst({
+      where: { id, tenantId: tenant.id },
+    });
+    if (!launch) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    if (!launch.tokenJti) {
+      reply.code(409);
+      return { error: 'revoked' };
+    }
+    const { token, expiresAt } = await signLaunchToken(
+      {
+        sub: launch.id,
+        jti: launch.tokenJti,
+        tenantId: launch.tenantId,
+        templateId: launch.templateId,
+        userIdHash: launch.userIdHash,
+      },
+      { ttlSeconds: 300 }, // 5 minutes — admin preview only
+    );
+    const url = `${config.PUBLIC_API_URL}/launch/redeem?t=${encodeURIComponent(token)}`;
+    return { url, expiresAt: expiresAt.toISOString() };
+  });
 };

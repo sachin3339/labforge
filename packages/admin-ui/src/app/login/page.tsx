@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
 import { ADMIN_COOKIE_NAME, apiBaseUrl, getApiKey } from '@/lib/api';
+import { SubmitButton } from '@/components/submit-button';
 
 async function login(formData: FormData) {
   'use server';
@@ -96,9 +97,13 @@ export default async function LoginPage({
             />
           </label>
 
-          <button className="btn-primary mt-5 w-full" type="submit">
+          <SubmitButton
+            variant="primary"
+            className="mt-5 w-full"
+            pendingLabel="Signing in…"
+          >
             Sign in
-          </button>
+          </SubmitButton>
 
           <p className="mt-5 border-t border-ink-100 pt-4 text-xs text-ink-500">
             Default dev key:{' '}

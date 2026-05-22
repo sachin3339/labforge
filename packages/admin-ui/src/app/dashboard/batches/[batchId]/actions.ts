@@ -7,6 +7,28 @@ import { setFlash } from '@/lib/flash';
 
 // ----- Per-launch (seat) actions -----
 
+export async function openLaunchAction(formData: FormData) {
+  const launchId = String(formData.get('launchId') ?? '');
+  const batchId = String(formData.get('batchId') ?? '');
+  if (!launchId) return;
+  const res = await apiFetch<{ url: string }>(
+    `/api/v1/launches/${launchId}/preview-url`,
+    { method: 'POST' },
+  );
+  if (!res.ok) {
+    if (batchId) {
+      await setFlash({
+        kind: 'batch-error',
+        data: { message: `Open failed: ${res.error}` },
+      });
+      revalidatePath(`/dashboard/batches/${batchId}`);
+      redirect(`/dashboard/batches/${batchId}`);
+    }
+    return;
+  }
+  redirect(res.data.url);
+}
+
 export async function prepareLaunchAction(formData: FormData) {
   const launchId = String(formData.get('launchId') ?? '');
   const batchId = String(formData.get('batchId') ?? '');
