@@ -96,8 +96,12 @@ export function NewBatchClient({ templates }: { templates: Template[] }) {
           id="templateId"
           name="templateId"
           required
+          defaultValue=""
           className="mt-1 w-full rounded-md border border-ink-200 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
         >
+          <option value="" disabled>
+            — Choose a template —
+          </option>
           {templates.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}

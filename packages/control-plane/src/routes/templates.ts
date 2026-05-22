@@ -22,7 +22,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
     const tenant = req.tenant!;
     const templates = await prisma.labTemplate.findMany({
       where: { tenantId: tenant.id },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { name: 'asc' },
     });
     return { templates };
   });
