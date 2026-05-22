@@ -100,6 +100,15 @@ model LabInstance {
 
   userIdHash  String?
   lastSeenAt  DateTime?
+  /// Last time the student actually interacted (HTTP request via proxy).
+  /// Drives idle→suspend decisions independently of lastSeenAt (which
+  /// captures any heartbeat including internal pings).
+  lastActivityAt DateTime?
+  /// Named Docker volume holding the student's persisted data. Same volume
+  /// is re-mounted every time this (userIdHash, templateId) is re-provisioned.
+  volumeName  String?
+  /// When the lab was last suspended (docker stop). Null while active.
+  suspendedAt DateTime?
   createdAt   DateTime @default(now())
   expiresAt   DateTime
   terminatedAt DateTime?
@@ -109,6 +118,7 @@ model LabInstance {
 
   @@index([tenantId, status])
   @@index([templateId, status, isPrewarm])
+  @@index([templateId, userIdHash, status])
 }
 
 model GradingResult {

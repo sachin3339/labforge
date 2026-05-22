@@ -1,29 +1,67 @@
 import { customAlphabet } from 'nanoid';
+import { createHash } from 'node:crypto';
 import type { LabTemplate, LabInstance } from '@prisma/client';
-import { LabTemplateSpec } from '@labforge/shared';
+import { LabTemplateSpec, type LabTemplateSpec as LabTemplateSpecT } from '@labforge/shared';
 import { prisma } from './db.js';
 import { config } from './config.js';
 import { getRuntime } from './runtime/index.js';
+import type { VolumeMount } from './runtime/types.js';
 
 // Lowercase, DNS-safe — used as subdomain.
 const sub = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 12);
+
+/** Statuses where the existing container is still usable (running or stopped-but-keepable). */
+const REUSABLE_STATUSES = new Set<LabInstance['status']>([
+  'pending',
+  'provisioning',
+  'ready',
+  'idle',
+  'paused',
+]);
 
 export interface AcquireInput {
   tenantId: string;
   template: LabTemplate;
   userIdHash: string;
   durationMinutes: number;
+  /** Explicit expiry. Overrides durationMinutes. Use for batch-tied lifetime. */
+  expiresAt?: Date;
 }
 
 /**
  * Acquire an instance for a user. Strategy:
- *   1. If a pre-warmed instance for this template exists, claim it atomically.
- *   2. Otherwise provision a fresh one.
+ *   1. If THIS user already has a live/suspended instance for this template,
+ *      reuse it (data is on the volume, container may need resume).
+ *   2. Else if a pre-warmed instance for this template exists, claim it.
+ *   3. Else provision a fresh one.
  *
- * Returns once the runtime has started (not necessarily ready — caller polls).
+ * Caller is responsible for resuming a stopped container if needed (the
+ * redeem route does this).
  */
 export async function acquireInstance(input: AcquireInput): Promise<LabInstance> {
-  const expiresAt = new Date(Date.now() + input.durationMinutes * 60_000);
+  const expiresAt =
+    input.expiresAt ?? new Date(Date.now() + input.durationMinutes * 60_000);
+
+  // 0. Per-user reuse: do we already have one for this (template, user)?
+  const existing = await prisma.labInstance.findFirst({
+    where: {
+      templateId: input.template.id,
+      userIdHash: input.userIdHash,
+      isPrewarm: false,
+      status: { in: Array.from(REUSABLE_STATUSES) },
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+  if (existing) {
+    // Extend expiry if the new acquire window is longer.
+    if (existing.expiresAt < expiresAt) {
+      return prisma.labInstance.update({
+        where: { id: existing.id },
+        data: { expiresAt },
+      });
+    }
+    return existing;
+  }
 
   // 1. Try claiming a prewarm.
   const claimed = await claimPrewarm(input.template.id, input.userIdHash, expiresAt);
@@ -76,6 +114,18 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
   const spec = LabTemplateSpec.parse(input.template.spec);
   const subdomain = sub();
 
+  // Volumes are PER USER + PER TEMPLATE so a student gets the same data
+  // back regardless of how many times their container is replaced. Prewarm
+  // pool instances get no volume — they're stateless until claimed.
+  const volumes: VolumeMount[] = [];
+  let volumeName: string | null = null;
+  if (!input.isPrewarm && input.userIdHash) {
+    volumeName = computeVolumeName(input.userIdHash, input.template.id);
+    for (const path of effectivePersistPaths(spec)) {
+      volumes.push({ name: volumeName, containerPath: path });
+    }
+  }
+
   const instance = await prisma.labInstance.create({
     data: {
       tenantId: input.tenantId,
@@ -85,6 +135,7 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
       subdomain,
       userIdHash: input.userIdHash,
       expiresAt: input.expiresAt,
+      volumeName,
     },
   });
 
@@ -95,6 +146,7 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
       subdomain,
       spec,
       userIdHash: input.userIdHash,
+      volumes,
       labels: {
         tenant: input.tenantId,
         template: input.template.id,
@@ -103,7 +155,7 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
 
     return prisma.labInstance.update({
       where: { id: instance.id },
-      data: { runtimeId, upstream, status: 'ready' },
+      data: { runtimeId, upstream, status: 'ready', lastActivityAt: new Date() },
     });
   } catch (err) {
     await prisma.labInstance.update({
@@ -112,6 +164,32 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
     });
     throw err;
   }
+}
+
+/**
+ * Per-user, per-template Docker volume name. Stable across container
+ * lifecycles so the same student gets the same data back every time.
+ *
+ *   lf-data-<userHash8>-<templateHash8>
+ *
+ * Docker volume names allow [a-zA-Z0-9][a-zA-Z0-9_.-]; we keep ours strictly
+ * lowercase alnum + hyphen to be safe on every backend.
+ */
+function computeVolumeName(userIdHash: string, templateId: string): string {
+  const u = userIdHash.slice(0, 16).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const t = createHash('sha1').update(templateId).digest('hex').slice(0, 8);
+  return `lf-data-${u}-${t}`;
+}
+
+/**
+ * Paths inside the container that should be persisted. Templates can
+ * declare them explicitly via `spec.persistPaths`; if they don't, fall
+ * back to `spec.workspaceDir` so naive templates still get persistence.
+ */
+function effectivePersistPaths(spec: LabTemplateSpecT): string[] {
+  if (spec.persistPaths && spec.persistPaths.length > 0) return spec.persistPaths;
+  if (spec.workspaceDir) return [spec.workspaceDir];
+  return [];
 }
 
 export async function destroyInstance(instanceId: string): Promise<void> {

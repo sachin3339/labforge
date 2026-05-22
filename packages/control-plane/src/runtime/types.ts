@@ -1,5 +1,12 @@
 import type { LabTemplateSpec } from '@labforge/shared';
 
+export interface VolumeMount {
+  /** Named Docker volume (created lazily by the runtime if missing). */
+  name: string;
+  /** Absolute path inside the container. */
+  containerPath: string;
+}
+
 /**
  * What the orchestrator hands to a runtime adapter when asking it to bring
  * up a single lab. Runtime-agnostic: docker, k8s, KubeVirt all implement
@@ -12,6 +19,8 @@ export interface ProvisionRequest {
   spec: LabTemplateSpec;
   /** Hashed user id so we can label/observe but not de-anonymise. */
   userIdHash?: string;
+  /** Persistent volumes to mount. The runtime creates them if missing. */
+  volumes?: VolumeMount[];
   /** Free-form labels for billing/observability. */
   labels: Record<string, string>;
 }

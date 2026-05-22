@@ -77,6 +77,11 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
           template: launch.template,
           userIdHash: launch.userIdHash,
           durationMinutes: launch.durationMinutes,
+          // Pin the container's lifetime to the URL's lifetime so the
+          // student's lab (and persistent volume) stay until the batch is
+          // over. Without this, the container would be reaped after
+          // durationMinutes (≤ 8h) even though the URL is valid for 30 days.
+          expiresAt: launch.expiresAt,
         });
       } catch (err) {
         reply.code(500);

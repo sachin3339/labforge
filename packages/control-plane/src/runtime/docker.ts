@@ -50,6 +50,14 @@ export class DockerRuntime implements LabRuntime {
     // Pull image if missing. Best-effort; ignore failure (image may already exist).
     await this.ensureImage(spec.image);
 
+    // Ensure each named volume exists. Volumes survive container removal
+    // so the student's data persists across suspend/resume/reprovision.
+    const binds: string[] = [];
+    for (const vol of req.volumes ?? []) {
+      await this.ensureVolume(vol.name);
+      binds.push(`${vol.name}:${vol.containerPath}`);
+    }
+
     const env = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`);
 
     // Build HostConfig.Devices for /dev/kvm and friends.
@@ -73,6 +81,7 @@ export class DockerRuntime implements LabRuntime {
         NetworkMode: config.DOCKER_NETWORK,
         Memory: spec.memoryMb * 1024 * 1024,
         NanoCpus: Math.round(spec.cpu * 1e9),
+        Binds: binds.length ? binds : undefined,
         // For VM-kind labs we keep CapDrop:ALL and selectively add back via
         // capAdd in the template (e.g. NET_ADMIN). Privileged overrides this
         // entirely when explicitly requested.
@@ -231,6 +240,26 @@ export class DockerRuntime implements LabRuntime {
       stderr: Buffer.concat(stderrChunks).toString('utf8'),
       timedOut,
     };
+  }
+
+  private async ensureVolume(name: string): Promise<void> {
+    try {
+      await this.docker.getVolume(name).inspect();
+      return;
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      if (e.statusCode !== 404) throw err;
+    }
+    try {
+      await this.docker.createVolume({
+        Name: name,
+        Labels: { 'labforge.managed': 'true' },
+      });
+    } catch (err: unknown) {
+      // 409 means another concurrent provision just created it — fine.
+      const e = err as { statusCode?: number };
+      if (e.statusCode !== 409) throw err;
+    }
   }
 
   private async ensureImage(image: string): Promise<void> {

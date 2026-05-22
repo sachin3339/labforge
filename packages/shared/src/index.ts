@@ -27,6 +27,22 @@ export const LabTemplateSpec = z.object({
   env: z.record(z.string()).default({}),
   /** Optional workspace path mounted as the user's persistent dir. */
   workspaceDir: z.string().default('/home/coder/project'),
+  /**
+   * Container paths that should be persisted to a per-user named Docker
+   * volume. The same paths are mounted every time we (re)provision a
+   * container for the same student, so their files survive container
+   * restarts, suspends, and reschedules.
+   *
+   * Examples:
+   *   - vscode-node:     ['/home/coder']
+   *   - ubuntu-desktop:  ['/root', '/home']
+   *   - jupyter-python:  ['/home/jovyan']
+   *   - windows-11 (VM): ['/storage']  // qemu disk image
+   *
+   * Leave empty for stateless labs (rare — even then, most students expect
+   * their work to survive a refresh).
+   */
+  persistPaths: z.array(z.string()).default([]),
   /** How many warm instances to keep ready. */
   prewarm: z.number().int().min(0).max(50).default(0),
 
