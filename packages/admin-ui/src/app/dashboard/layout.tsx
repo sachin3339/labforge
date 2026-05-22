@@ -18,6 +18,7 @@ const navItems = [
   { href: '/dashboard/templates', label: 'Templates' },
   { href: '/dashboard/batches', label: 'Batches' },
   { href: '/dashboard/instances', label: 'Live labs' },
+  { href: '/dashboard/reports', label: 'Reports' },
   { href: '/dashboard/settings', label: 'Settings' },
 ];
 
