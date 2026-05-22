@@ -66,8 +66,9 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
 
     reply.hijack();
     proxy.web(req.raw, reply.raw, {
-      target: `http://${decision.upstream}`,
+      target: `${decision.scheme}://${decision.upstream}`,
       changeOrigin: false,
+      secure: false,
     });
   });
 
@@ -98,8 +99,9 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
         return;
       }
       proxy.ws(req, socket, head, {
-        target: `http://${decision.upstream}`,
+        target: `${decision.scheme}://${decision.upstream}`,
         changeOrigin: false,
+        secure: false,
       });
     })().catch((err) => {
       app.log.error({ err: (err as Error).message }, '[proxy] ws hook error');
@@ -115,7 +117,7 @@ function isLabHost(host: string): boolean {
 }
 
 type Decision =
-  | { kind: 'ok'; upstream: string; instanceId: string }
+  | { kind: 'ok'; upstream: string; scheme: 'http' | 'https'; instanceId: string }
   | { kind: 'warming'; templateName: string }
   | { kind: 'unavailable'; reason: string; code: number }
   | { kind: 'error'; error: string; code: number };
@@ -199,7 +201,12 @@ async function resolveAndAuth(
     })
     .catch(() => {});
 
-  return { kind: 'ok', upstream: instance.upstream, instanceId: instance.id };
+  // Read upstream scheme from the template spec. Kasm-based desktops only
+  // accept HTTPS upstream; everything else defaults to plain HTTP.
+  const spec = (instance.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
+  const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
+
+  return { kind: 'ok', upstream: instance.upstream, scheme, instanceId: instance.id };
 }
 
 async function fastIsReady(runtimeId: string, upstream: string): Promise<boolean> {

@@ -22,6 +22,13 @@ export const LabTemplateSpec = z.object({
   runtime: LabRuntimeKind,
   /** Port inside the container the browser connects to. */
   port: z.number().int().positive().default(8080),
+  /**
+   * Protocol the lab container speaks on `port`. Default is plain HTTP, but
+   * Kasm-based desktops (and a few other images) only accept HTTPS on the
+   * upstream. The wildcard proxy reads this to pick the target scheme and
+   * disables TLS verification for `https` (self-signed certs are normal).
+   */
+  upstreamScheme: z.enum(['http', 'https']).default('http'),
   cpu: z.number().positive().default(1),
   memoryMb: z.number().int().positive().default(1024),
   env: z.record(z.string()).default({}),

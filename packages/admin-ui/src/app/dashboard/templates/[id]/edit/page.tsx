@@ -7,6 +7,7 @@ type TemplateSpec = {
   image: string;
   runtime: string;
   port: number;
+  upstreamScheme?: 'http' | 'https';
   cpu: number;
   memoryMb: number;
   env?: Record<string, string>;
@@ -34,6 +35,7 @@ async function update(templateId: string, formData: FormData) {
   const image = String(formData.get('image') ?? '').trim();
   const runtime = String(formData.get('runtime') ?? 'code-server').trim();
   const port = Number(formData.get('port') ?? 8080);
+  const upstreamScheme = String(formData.get('upstreamScheme') ?? 'http') === 'https' ? 'https' : 'http';
   const cpu = Number(formData.get('cpu') ?? 1);
   const memoryMb = Number(formData.get('memoryMb') ?? 1024);
   const prewarm = Number(formData.get('prewarm') ?? 0);
@@ -77,6 +79,7 @@ async function update(templateId: string, formData: FormData) {
         image,
         runtime,
         port,
+        upstreamScheme,
         cpu,
         memoryMb,
         env,
@@ -176,6 +179,16 @@ export default async function EditTemplatePage({
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Field label="Port">
             <input name="port" type="number" className="input" defaultValue={s.port} required />
+          </Field>
+          <Field label="Upstream scheme" hint="HTTPS for Kasm desktops">
+            <select
+              name="upstreamScheme"
+              className="input"
+              defaultValue={s.upstreamScheme ?? 'http'}
+            >
+              <option value="http">http</option>
+              <option value="https">https</option>
+            </select>
           </Field>
           <Field label="vCPU">
             <input name="cpu" type="number" step="0.25" className="input" defaultValue={s.cpu} required />
