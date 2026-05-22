@@ -10,6 +10,7 @@ import {
 } from '../orchestrator.js';
 import { config } from '../config.js';
 import { warmingUpHtml } from '../ui/warmingPage.js';
+import { emitUsage } from '../metering.js';
 
 const Query = z.object({ t: z.string().min(10) });
 
@@ -104,12 +105,30 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
           redeemedAt: launch.redeemedAt ?? new Date(),
         },
       });
+      if (!launch.redeemedAt) {
+        emitUsage({
+          tenantId: launch.tenantId,
+          kind: 'launch_redeemed',
+          launchId: launch.id,
+          instanceId: instance.id,
+          templateId: launch.templateId,
+          userIdHash: launch.userIdHash,
+        });
+      }
     } else if (!launch.redeemedAt) {
       // Instance already attached (e.g. created via a different path) but
       // first time we're recording the redemption.
       await prisma.launch.update({
         where: { id: launch.id },
         data: { redeemedAt: new Date() },
+      });
+      emitUsage({
+        tenantId: launch.tenantId,
+        kind: 'launch_redeemed',
+        launchId: launch.id,
+        instanceId: instance.id,
+        templateId: launch.templateId,
+        userIdHash: launch.userIdHash,
       });
     }
 

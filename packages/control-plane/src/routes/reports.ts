@@ -462,7 +462,169 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
       pausedNow: all.filter((i) => i.status === 'paused').length,
     };
   });
+
+  /**
+   * GET /api/v1/reports/pax-days?from=&to=&format=json|csv
+   * Billing-grade aggregation: one pax-day = one distinct
+   * (userIdHash, templateId, calendar day) that saw a `launch_redeemed`
+   * event in the window. Also returns compute-hours (sum of
+   * instance_ready -> instance_terminated/paused intervals, minus paused
+   * gaps via instance_resumed -> instance_paused). UI reads `rows`.
+   */
+  app.get('/pax-days', async (req, reply) => {
+    const tenant = req.tenant!;
+    const q = parseQuery(req.url);
+    const parsed = Window.safeParse(q);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'invalid_window' };
+    }
+    const { from, to } = parsed.data;
+    const format = (q.format ?? 'json').toLowerCase();
+
+    // Pax-days: distinct (userIdHash, templateId, day) from redemptions.
+    const paxRows = await prisma.$queryRaw<
+      Array<{ templateId: string; paxDays: bigint; users: bigint; sessions: bigint }>
+    >(Prisma.sql`
+      SELECT
+        "templateId",
+        COUNT(DISTINCT ("userIdHash" || '|' || to_char("occurredAt" at time zone 'UTC', 'YYYY-MM-DD'))) AS "paxDays",
+        COUNT(DISTINCT "userIdHash") AS "users",
+        COUNT(*) AS "sessions"
+      FROM "UsageEvent"
+      WHERE "tenantId" = ${tenant.id}
+        AND "kind" = 'launch_redeemed'
+        AND "occurredAt" >= ${from}
+        AND "occurredAt" < ${to}
+        AND "templateId" IS NOT NULL
+        AND "userIdHash" IS NOT NULL
+      GROUP BY "templateId"
+    `);
+
+    // Compute-hours: pair ready/resumed (start) with paused/terminated (stop)
+    // per instance, sum positive deltas. Done in JS for clarity since the
+    // event stream is small per tenant.
+    const lifecycle = await prisma.usageEvent.findMany({
+      where: {
+        tenantId: tenant.id,
+        kind: {
+          in: ['instance_ready', 'instance_paused', 'instance_resumed', 'instance_terminated'],
+        },
+        occurredAt: { gte: from, lt: to },
+        instanceId: { not: null },
+      },
+      orderBy: { occurredAt: 'asc' },
+      select: { instanceId: true, templateId: true, kind: true, occurredAt: true },
+    });
+    const hoursByTemplate = new Map<string, number>();
+    const openByInstance = new Map<string, { start: Date; templateId: string | null }>();
+    for (const ev of lifecycle) {
+      const id = ev.instanceId!;
+      if (ev.kind === 'instance_ready' || ev.kind === 'instance_resumed') {
+        openByInstance.set(id, { start: ev.occurredAt, templateId: ev.templateId });
+      } else if (ev.kind === 'instance_paused' || ev.kind === 'instance_terminated') {
+        const open = openByInstance.get(id);
+        if (open) {
+          const tId = open.templateId ?? ev.templateId;
+          if (tId) {
+            const h = Math.max(0, (ev.occurredAt.getTime() - open.start.getTime()) / 3_600_000);
+            hoursByTemplate.set(tId, (hoursByTemplate.get(tId) ?? 0) + h);
+          }
+          openByInstance.delete(id);
+        }
+      }
+    }
+    // Instances still open at `to` count up to `to`.
+    for (const [, open] of openByInstance) {
+      if (!open.templateId) continue;
+      const h = Math.max(0, (to.getTime() - open.start.getTime()) / 3_600_000);
+      hoursByTemplate.set(open.templateId, (hoursByTemplate.get(open.templateId) ?? 0) + h);
+    }
+
+    const tmpls = await prisma.labTemplate.findMany({
+      where: { tenantId: tenant.id, id: { in: [...new Set([
+        ...paxRows.map((r) => r.templateId),
+        ...hoursByTemplate.keys(),
+      ])] } },
+      select: { id: true, name: true, spec: true },
+    });
+    const tmplMap = new Map(tmpls.map((t) => [t.id, t]));
+
+    const rows = Array.from(
+      new Set([...paxRows.map((r) => r.templateId), ...hoursByTemplate.keys()]),
+    )
+      .map((templateId) => {
+        const px = paxRows.find((r) => r.templateId === templateId);
+        const t = tmplMap.get(templateId);
+        const spec = t?.spec as unknown as LabTemplateSpecT | undefined;
+        const hours = Math.round((hoursByTemplate.get(templateId) ?? 0) * 100) / 100;
+        const paxDays = px ? Number(px.paxDays) : 0;
+        const users = px ? Number(px.users) : 0;
+        const sessions = px ? Number(px.sessions) : 0;
+        const cost = Math.round(hours * (spec?.costPerHourUsd ?? 0) * 100) / 100;
+        const revenue = Math.round(paxDays * (spec?.priceListUsd ?? 0) * 100) / 100;
+        return {
+          templateId,
+          templateName: t?.name ?? '(deleted)',
+          paxDays,
+          users,
+          sessions,
+          hours,
+          cost,
+          revenue,
+          margin: Math.round((revenue - cost) * 100) / 100,
+        };
+      })
+      .sort((a, b) => b.paxDays - a.paxDays);
+
+    const totals = rows.reduce(
+      (s, r) => ({
+        paxDays: s.paxDays + r.paxDays,
+        users: s.users + r.users,
+        sessions: s.sessions + r.sessions,
+        hours: Math.round((s.hours + r.hours) * 100) / 100,
+        cost: Math.round((s.cost + r.cost) * 100) / 100,
+        revenue: Math.round((s.revenue + r.revenue) * 100) / 100,
+        margin: Math.round((s.margin + r.margin) * 100) / 100,
+      }),
+      { paxDays: 0, users: 0, sessions: 0, hours: 0, cost: 0, revenue: 0, margin: 0 },
+    );
+
+    if (format === 'csv') {
+      const header =
+        'templateId,templateName,paxDays,users,sessions,hours,costUsd,revenueUsd,marginUsd';
+      const lines = rows.map((r) =>
+        [
+          r.templateId,
+          csvEscape(r.templateName),
+          r.paxDays,
+          r.users,
+          r.sessions,
+          r.hours,
+          r.cost,
+          r.revenue,
+          r.margin,
+        ].join(','),
+      );
+      reply
+        .header('content-type', 'text/csv; charset=utf-8')
+        .header(
+          'content-disposition',
+          `attachment; filename="pax-days_${from.toISOString().slice(0, 10)}_${to
+            .toISOString()
+            .slice(0, 10)}.csv"`,
+        );
+      return [header, ...lines].join('\n');
+    }
+
+    return { from: from.toISOString(), to: to.toISOString(), rows, totals };
+  });
 };
+
+function csvEscape(s: string): string {
+  if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
 
 function parseQuery(url: string): Record<string, string> {
   const u = new URL(url, 'http://x');

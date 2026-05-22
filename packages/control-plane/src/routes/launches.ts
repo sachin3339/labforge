@@ -6,6 +6,7 @@ import { prisma } from '../db.js';
 import { authenticateTenant } from '../auth/apiKey.js';
 import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
+import { emitUsage } from '../metering.js';
 
 export const launchRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
@@ -85,6 +86,15 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
         tokenJti: jti,
         expiresAt,
       },
+    });
+
+    emitUsage({
+      tenantId: tenant.id,
+      kind: 'launch_created',
+      launchId,
+      templateId: template.id,
+      userIdHash,
+      payload: { durationMinutes },
     });
 
     const launchUrl = `${config.PUBLIC_API_URL}/launch/redeem?t=${encodeURIComponent(token)}`;

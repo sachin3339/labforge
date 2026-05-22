@@ -4,6 +4,7 @@ type Tab = { href: string; label: string };
 
 const TABS: Tab[] = [
   { href: '/dashboard/reports', label: 'Usage' },
+  { href: '/dashboard/reports/pax-days', label: 'Pax-days' },
   { href: '/dashboard/reports/templates', label: 'By template' },
   { href: '/dashboard/reports/cost', label: 'Cost & margin' },
   { href: '/dashboard/reports/students', label: 'Students' },

@@ -6,6 +6,7 @@ import { prisma } from './db.js';
 import { config } from './config.js';
 import { getRuntime } from './runtime/index.js';
 import type { VolumeMount } from './runtime/types.js';
+import { emitUsage } from './metering.js';
 
 // Lowercase, DNS-safe — used as subdomain.
 const sub = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 12);
@@ -99,7 +100,18 @@ async function claimPrewarm(
      )
      RETURNING *;
   `;
-  return rows[0] ?? null;
+  const claimed = rows[0] ?? null;
+  if (claimed) {
+    emitUsage({
+      tenantId: claimed.tenantId,
+      kind: 'instance_ready',
+      instanceId: claimed.id,
+      templateId: claimed.templateId,
+      userIdHash: claimed.userIdHash,
+      payload: { source: 'prewarm' },
+    });
+  }
+  return claimed;
 }
 
 export interface ProvisionNewInput {
@@ -153,10 +165,20 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
       },
     });
 
-    return prisma.labInstance.update({
+    const updated = await prisma.labInstance.update({
       where: { id: instance.id },
       data: { runtimeId, upstream, status: 'ready', lastActivityAt: new Date() },
     });
+    if (!input.isPrewarm) {
+      emitUsage({
+        tenantId: updated.tenantId,
+        kind: 'instance_ready',
+        instanceId: updated.id,
+        templateId: updated.templateId,
+        userIdHash: updated.userIdHash,
+      });
+    }
+    return updated;
   } catch (err) {
     await prisma.labInstance.update({
       where: { id: instance.id },
@@ -222,6 +244,14 @@ export async function destroyInstance(
     where: { id: instanceId },
     data: { status: 'terminated', terminatedAt: new Date() },
   });
+  emitUsage({
+    tenantId: inst.tenantId,
+    kind: 'instance_terminated',
+    instanceId: inst.id,
+    templateId: inst.templateId,
+    userIdHash: inst.userIdHash,
+    payload: { deleteVolume: opts.deleteVolume === true, prevStatus: inst.status },
+  });
 }
 
 /**
@@ -238,6 +268,13 @@ export async function suspendInstance(instanceId: string): Promise<void> {
   await prisma.labInstance.update({
     where: { id: instanceId },
     data: { status: 'paused', suspendedAt: new Date() },
+  });
+  emitUsage({
+    tenantId: inst.tenantId,
+    kind: 'instance_paused',
+    instanceId: inst.id,
+    templateId: inst.templateId,
+    userIdHash: inst.userIdHash,
   });
 }
 
@@ -258,6 +295,13 @@ export async function resumeInstance(
   const updated = await prisma.labInstance.update({
     where: { id: instanceId },
     data: { status: 'ready', suspendedAt: null, lastActivityAt: new Date() },
+  });
+  emitUsage({
+    tenantId: updated.tenantId,
+    kind: 'instance_resumed',
+    instanceId: updated.id,
+    templateId: updated.templateId,
+    userIdHash: updated.userIdHash,
   });
 
   // Optional inline wait so callers (e.g. redeem) can hand the student a

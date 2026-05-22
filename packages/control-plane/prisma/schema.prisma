@@ -22,6 +22,7 @@ model Tenant {
   templates LabTemplate[]
   instances LabInstance[]
   launches  Launch[]
+  usageEvents UsageEvent[]
 }
 
 model LabTemplate {
@@ -139,4 +140,37 @@ model GradingResult {
   @@index([tenantId, createdAt])
   @@index([instanceId, createdAt])
   @@index([launchId])
+}
+
+// Billing-grade audit log. Every interesting lab lifecycle moment writes
+// a row here so we can derive pax-days, compute-hours, and dispute-
+// resolution trails without scraping the LabInstance/Launch tables.
+// Best-effort emit -- writes never block the user-visible path.
+enum UsageEventKind {
+  launch_created
+  launch_redeemed
+  instance_ready
+  instance_idle
+  instance_paused
+  instance_resumed
+  instance_terminated
+}
+
+model UsageEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  kind        UsageEventKind
+  /// Optional pointers (no FKs to allow event survival after cascade deletes).
+  launchId    String?
+  instanceId  String?
+  templateId  String?
+  userIdHash  String?
+  /// Free-form billing context: durationMinutes, hours, reason, etc.
+  payload     Json?
+  occurredAt  DateTime @default(now())
+
+  @@index([tenantId, occurredAt])
+  @@index([tenantId, kind, occurredAt])
+  @@index([instanceId])
 }
