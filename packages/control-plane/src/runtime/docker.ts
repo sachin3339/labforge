@@ -1,5 +1,6 @@
 import Docker from 'dockerode';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { Agent as UndiciAgent } from 'undici';
 import { config } from '../config.js';
 import type {
   ExecRequest,
@@ -8,6 +9,15 @@ import type {
   ProvisionRequest,
   ProvisionResult,
 } from './types.js';
+
+/**
+ * undici Agent that skips TLS verification for upstream readiness probes.
+ * Lab containers use self-signed certs (e.g. KasmVNC on :6901); we just
+ * need to know the socket is accepting handshakes, not validate identity.
+ */
+const httpsInsecureDispatcher = new UndiciAgent({
+  connect: { rejectUnauthorized: false },
+});
 
 /**
  * Docker runtime adapter. Used for local dev and single-node deployments.
@@ -133,7 +143,11 @@ export class DockerRuntime implements LabRuntime {
     return { runtimeId: container.id, upstream };
   }
 
-  async isReady(runtimeId: string, upstream: string): Promise<boolean> {
+  async isReady(
+    runtimeId: string,
+    upstream: string,
+    scheme: 'http' | 'https' = 'http',
+  ): Promise<boolean> {
     try {
       const c = this.docker.getContainer(runtimeId);
       const info = await c.inspect();
@@ -141,12 +155,22 @@ export class DockerRuntime implements LabRuntime {
 
       // TCP probe via fetch is overkill for raw TCP — use a simple HTTP HEAD
       // against the upstream. The control plane shares the labnet so DNS
-      // resolves.
-      const url = `http://${upstream}/`;
+      // resolves. Use `scheme` (template-defined) so HTTPS-only upstreams
+      // (KasmVNC on :6901) are probed correctly instead of being rejected
+      // as "non-SSL connection disallowed" every second.
+      const url = `${scheme}://${upstream}/`;
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 1500);
       try {
-        await fetch(url, { method: 'HEAD', signal: ctrl.signal });
+        const init: RequestInit & { dispatcher?: unknown } = {
+          method: 'HEAD',
+          signal: ctrl.signal,
+        };
+        if (scheme === 'https') {
+          // Lab upstreams use self-signed certs; skip verification.
+          init.dispatcher = httpsInsecureDispatcher;
+        }
+        await fetch(url, init);
         return true;
       } catch {
         return false;

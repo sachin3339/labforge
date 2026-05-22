@@ -261,10 +261,13 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
 
     let ready = instance!.status === 'ready' || instance!.status === 'idle';
     if (waitSeconds > 0 && instance!.runtimeId && instance!.upstream && !ready) {
+      const spec = (launch.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
+      const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
       ready = await waitUntilReady(
         instance!.runtimeId,
         instance!.upstream,
         waitSeconds * 1000,
+        scheme,
       );
       if (ready) {
         instance = await prisma.labInstance.findUniqueOrThrow({

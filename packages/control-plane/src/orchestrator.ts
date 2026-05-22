@@ -308,7 +308,12 @@ export async function resumeInstance(
   // working URL the instant the container is healthy.
   const waitMs = opts.waitMs ?? 0;
   if (waitMs > 0 && updated.upstream) {
-    await waitUntilReady(inst.runtimeId, updated.upstream, waitMs);
+    const tmpl = await prisma.labTemplate.findUnique({
+      where: { id: updated.templateId },
+    });
+    const spec = (tmpl?.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
+    const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
+    await waitUntilReady(inst.runtimeId, updated.upstream, waitMs, scheme);
   }
   return updated;
 }
@@ -317,11 +322,12 @@ export async function waitUntilReady(
   runtimeId: string,
   upstream: string,
   timeoutMs: number,
+  scheme: 'http' | 'https' = 'http',
 ): Promise<boolean> {
   const runtime = getRuntime();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await runtime.isReady(runtimeId, upstream)) return true;
+    if (await runtime.isReady(runtimeId, upstream, scheme)) return true;
     await new Promise((r) => setTimeout(r, 1000));
   }
   return false;

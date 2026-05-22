@@ -56,7 +56,11 @@ export interface LabRuntime {
   /** Provision and return once the container/pod is *running* (not necessarily ready). */
   provision(req: ProvisionRequest): Promise<ProvisionResult>;
   /** Best-effort health check; resolves true if upstream responds. */
-  isReady(runtimeId: string, upstream: string): Promise<boolean>;
+  isReady(
+    runtimeId: string,
+    upstream: string,
+    scheme?: 'http' | 'https',
+  ): Promise<boolean>;
   /** Stop and remove. Idempotent. */
   destroy(runtimeId: string): Promise<void>;
   /** Stop gracefully but KEEP disk + volumes. Idempotent. */

@@ -187,7 +187,13 @@ async function resolveAndAuth(
   if (instance.status !== 'ready' && instance.status !== 'idle') {
     return { kind: 'warming', templateName: instance.template.name };
   }
-  if (instance.runtimeId && !(await fastIsReady(instance.runtimeId, instance.upstream))) {
+  // Read upstream scheme from the template spec. Kasm-based desktops only
+  // accept HTTPS upstream; everything else defaults to plain HTTP. We resolve
+  // it BEFORE the readiness probe so the probe targets the correct scheme.
+  const spec = (instance.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
+  const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
+
+  if (instance.runtimeId && !(await fastIsReady(instance.runtimeId, instance.upstream, scheme))) {
     return { kind: 'warming', templateName: instance.template.name };
   }
 
@@ -201,17 +207,16 @@ async function resolveAndAuth(
     })
     .catch(() => {});
 
-  // Read upstream scheme from the template spec. Kasm-based desktops only
-  // accept HTTPS upstream; everything else defaults to plain HTTP.
-  const spec = (instance.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
-  const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
-
   return { kind: 'ok', upstream: instance.upstream, scheme, instanceId: instance.id };
 }
 
-async function fastIsReady(runtimeId: string, upstream: string): Promise<boolean> {
+async function fastIsReady(
+  runtimeId: string,
+  upstream: string,
+  scheme: 'http' | 'https',
+): Promise<boolean> {
   try {
-    return await getRuntime().isReady(runtimeId, upstream);
+    return await getRuntime().isReady(runtimeId, upstream, scheme);
   } catch {
     return false;
   }

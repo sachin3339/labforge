@@ -148,10 +148,13 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
       // Freshly provisioned containers can take a few seconds to listen on
       // their port (Windows boot can take 30s+). Block briefly so the
       // redirect lands on a working URL.
+      const spec = (launch.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
+      const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
       const ok = await waitUntilReady(
         instance.runtimeId,
         instance.upstream,
         config.RESUME_WAIT_TIMEOUT_SECONDS * 1000,
+        scheme,
       );
       if (!ok) {
         // Still warming up. Render an HTML page that auto-refreshes so the
