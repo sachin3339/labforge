@@ -59,6 +59,12 @@ export interface LabRuntime {
   isReady(runtimeId: string, upstream: string): Promise<boolean>;
   /** Stop and remove. Idempotent. */
   destroy(runtimeId: string): Promise<void>;
+  /** Stop gracefully but KEEP disk + volumes. Idempotent. */
+  suspend(runtimeId: string): Promise<void>;
+  /** Start a previously suspended container. Idempotent. */
+  resume(runtimeId: string): Promise<void>;
+  /** Delete a named persistent volume. Idempotent. */
+  destroyVolume(name: string): Promise<void>;
   /** Execute a command inside the running container/pod. */
   exec(runtimeId: string, req: ExecRequest): Promise<ExecResult>;
 }

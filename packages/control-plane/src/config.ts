@@ -68,6 +68,33 @@ const Env = z.object({
   LAB_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(10),
   LAB_MAX_DURATION_MINUTES: z.coerce.number().int().positive().default(240),
 
+  /**
+   * After this many minutes of no student activity, a running lab is
+   * suspended (docker stop). Disk + volumes are preserved; resume on next
+   * redeem brings the same state back. This is the cost saver — the host
+   * can hold hundreds of suspended labs (only disk used) while only the
+   * actively-in-use ones consume CPU/RAM.
+   */
+  LAB_SUSPEND_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
+  /**
+   * If a lab has been suspended this long with no student activity, the
+   * reaper hard-terminates it (container + volume gone) to reclaim disk.
+   * Independent of batch expiry — protects against forgotten labs.
+   */
+  LAB_HARD_INACTIVITY_DAYS: z.coerce.number().int().positive().default(14),
+  /**
+   * Max seconds the redeem endpoint will wait for a resumed container's
+   * upstream port to respond before falling back to the HTML "warming up"
+   * page (which auto-refreshes).
+   */
+  RESUME_WAIT_TIMEOUT_SECONDS: z.coerce.number().int().positive().default(30),
+
+  REAPER_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true'),
+  REAPER_INTERVAL_SECONDS: z.coerce.number().int().positive().default(60),
+
   PREWARM_ENABLED: z
     .string()
     .default('true')

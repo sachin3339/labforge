@@ -13,6 +13,7 @@ import { internalRoutes } from './routes/internal.js';
 import { adminRoutes } from './routes/admin.js';
 import { gradingRoutes } from './routes/grading.js';
 import { startPrewarmLoop, stopPrewarmLoop } from './prewarm.js';
+import { startReaperLoop, stopReaperLoop } from './reaper.js';
 import { registerWildcardProxy } from './wildcardProxy.js';
 
 const app = Fastify({
@@ -64,6 +65,7 @@ const host = '0.0.0.0';
 try {
   await app.listen({ port, host });
   startPrewarmLoop(app.log);
+  startReaperLoop(app.log);
 } catch (err) {
   app.log.error(err);
   process.exit(1);
@@ -73,6 +75,7 @@ try {
 const shutdown = async (signal: string) => {
   app.log.info(`[shutdown] signal=${signal}`);
   stopPrewarmLoop();
+  stopReaperLoop();
   await app.close();
   process.exit(0);
 };

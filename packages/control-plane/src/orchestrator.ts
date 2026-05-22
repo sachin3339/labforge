@@ -192,20 +192,99 @@ function effectivePersistPaths(spec: LabTemplateSpecT): string[] {
   return [];
 }
 
-export async function destroyInstance(instanceId: string): Promise<void> {
+export interface DestroyOptions {
+  /** When true, also delete the per-user named volume (irreversibly removes student data). */
+  deleteVolume?: boolean;
+}
+
+export async function destroyInstance(
+  instanceId: string,
+  opts: DestroyOptions = {},
+): Promise<void> {
   const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
   if (!inst) return;
+  const runtime = getRuntime();
   if (inst.runtimeId) {
     try {
-      await getRuntime().destroy(inst.runtimeId);
+      await runtime.destroy(inst.runtimeId);
     } catch {
       // best-effort; status update below records intent
+    }
+  }
+  if (opts.deleteVolume && inst.volumeName) {
+    try {
+      await runtime.destroyVolume(inst.volumeName);
+    } catch {
+      // best-effort
     }
   }
   await prisma.labInstance.update({
     where: { id: instanceId },
     data: { status: 'terminated', terminatedAt: new Date() },
   });
+}
+
+/**
+ * Suspend a running lab: stop the container gracefully, preserve volumes,
+ * mark the row `paused`. Idempotent \u2014 a no-op on already-paused/terminated.
+ */
+export async function suspendInstance(instanceId: string): Promise<void> {
+  const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
+  if (!inst || !inst.runtimeId) return;
+  if (inst.status === 'paused' || inst.status === 'terminated' || inst.status === 'failed') {
+    return;
+  }
+  await getRuntime().suspend(inst.runtimeId);
+  await prisma.labInstance.update({
+    where: { id: instanceId },
+    data: { status: 'paused', suspendedAt: new Date() },
+  });
+}
+
+/**
+ * Resume a suspended lab: start the container and (optionally) wait for the
+ * upstream to be reachable. Returns the updated row.
+ */
+export async function resumeInstance(
+  instanceId: string,
+  opts: { waitMs?: number } = {},
+): Promise<LabInstance> {
+  const inst = await prisma.labInstance.findUniqueOrThrow({ where: { id: instanceId } });
+  if (!inst.runtimeId) {
+    throw new Error(`instance ${instanceId} has no runtimeId; cannot resume`);
+  }
+  const runtime = getRuntime();
+  await runtime.resume(inst.runtimeId);
+  const updated = await prisma.labInstance.update({
+    where: { id: instanceId },
+    data: { status: 'ready', suspendedAt: null, lastActivityAt: new Date() },
+  });
+
+  // Optional inline wait so callers (e.g. redeem) can hand the student a
+  // working URL the instant the container is healthy.
+  const waitMs = opts.waitMs ?? 0;
+  if (waitMs > 0 && updated.upstream) {
+    await waitUntilReady(inst.runtimeId, updated.upstream, waitMs);
+  }
+  return updated;
+}
+
+/**
+ * Poll the runtime's isReady() until it returns true or the deadline
+ * elapses. Returns true if ready, false on timeout.
+ */
+export async function waitUntilReady(
+  runtimeId: string,
+  upstream: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const runtime = getRuntime();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await runtime.isReady(runtimeId, upstream)) return true;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
 }
 
 /** Public URL the gateway will route to this instance. */

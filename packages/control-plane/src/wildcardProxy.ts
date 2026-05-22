@@ -5,6 +5,7 @@ import httpProxy from 'http-proxy';
 import { prisma } from './db.js';
 import { verifySessionToken } from './auth/jwt.js';
 import { config } from './config.js';
+import { resumeInstance, waitUntilReady } from './orchestrator.js';
 
 /**
  * Reverse-proxies wildcard host `{subdomain}.<PUBLIC_LAB_DOMAIN>` to the
@@ -110,12 +111,49 @@ async function resolveAndAuth(
     return { error: 'invalid_session', code: 401 };
   }
 
-  // Fire-and-forget heartbeat.
+  // Auto-resume if the lab was suspended by the reaper. The student clicked
+  // a bookmarked subdomain URL; we don't make them re-redeem.
+  if (instance.status === 'paused' && instance.runtimeId) {
+    try {
+      await resumeInstance(instance.id, {
+        waitMs: config.RESUME_WAIT_TIMEOUT_SECONDS * 1000,
+      });
+    } catch {
+      return { error: 'resume_failed', code: 503 };
+    }
+  } else if (instance.status === 'ready' && instance.runtimeId) {
+    // Already "ready" in DB, but the container may have just been started
+    // by another path — do a fast readiness check so we don't 502.
+    if (!(await fastIsReady(instance.runtimeId, instance.upstream))) {
+      const ok = await waitUntilReady(
+        instance.runtimeId,
+        instance.upstream,
+        config.RESUME_WAIT_TIMEOUT_SECONDS * 1000,
+      );
+      if (!ok) return { error: 'upstream_not_ready', code: 503 };
+    }
+  }
+
+  // Fire-and-forget heartbeat. lastSeenAt = any traffic, lastActivityAt =
+  // student-facing traffic specifically (drives idle→suspend decisions).
+  const nowDate = new Date();
   void prisma.labInstance
-    .update({ where: { id: instance.id }, data: { lastSeenAt: new Date() } })
+    .update({
+      where: { id: instance.id },
+      data: { lastSeenAt: nowDate, lastActivityAt: nowDate },
+    })
     .catch(() => {});
 
   return { upstream: instance.upstream, instanceId: instance.id };
+}
+
+async function fastIsReady(runtimeId: string, upstream: string): Promise<boolean> {
+  try {
+    const { getRuntime } = await import('./runtime/index.js');
+    return await getRuntime().isReady(runtimeId, upstream);
+  } catch {
+    return false;
+  }
 }
 
 function parseCookie(header: string | undefined, name: string): string | undefined {

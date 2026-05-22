@@ -167,6 +167,40 @@ export class DockerRuntime implements LabRuntime {
     }
   }
 
+  /**
+   * Graceful stop — SIGTERM, then SIGKILL after 30s. The container row
+   * and its mounted named volumes stay in place so resume() can bring
+   * the same student back to the exact same lab state.
+   */
+  async suspend(runtimeId: string): Promise<void> {
+    try {
+      await this.docker.getContainer(runtimeId).stop({ t: 30 });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      // 304 = already stopped, 404 = gone — both acceptable.
+      if (e.statusCode !== 304 && e.statusCode !== 404) throw err;
+    }
+  }
+
+  async resume(runtimeId: string): Promise<void> {
+    try {
+      await this.docker.getContainer(runtimeId).start();
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      // 304 = already running.
+      if (e.statusCode !== 304) throw err;
+    }
+  }
+
+  async destroyVolume(name: string): Promise<void> {
+    try {
+      await this.docker.getVolume(name).remove();
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      if (e.statusCode !== 404 && e.statusCode !== 409) throw err;
+    }
+  }
+
   async exec(runtimeId: string, req: ExecRequest): Promise<ExecResult> {
     const c = this.docker.getContainer(runtimeId);
     const maxBytes = req.maxOutputBytes ?? 64 * 1024;
