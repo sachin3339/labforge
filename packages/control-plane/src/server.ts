@@ -13,6 +13,7 @@ import { internalRoutes } from './routes/internal.js';
 import { adminRoutes } from './routes/admin.js';
 import { gradingRoutes } from './routes/grading.js';
 import { reportRoutes } from './routes/reports.js';
+import { hostRoutes } from './routes/host.js';
 import { startPrewarmLoop, stopPrewarmLoop } from './prewarm.js';
 import { startReaperLoop, stopReaperLoop } from './reaper.js';
 import { registerWildcardProxy } from './wildcardProxy.js';
@@ -58,6 +59,7 @@ await app.register(
     await scope.register(adminRoutes, { prefix: '/admin' });
     await scope.register(gradingRoutes, { prefix: '/grading' });
     await scope.register(reportRoutes, { prefix: '/reports' });
+    await scope.register(hostRoutes, { prefix: '/host' });
   },
   { prefix: '/api/v1' },
 );

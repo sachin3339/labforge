@@ -47,6 +47,168 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
 
   /**
+   * GET /api/v1/reports/overview?from=&to=
+   * Executive summary tile used by the Reports landing page. Bundles
+   * top-level KPIs, period-over-period deltas, daily series for the
+   * window, status breakdown, and the top-5 templates so the UI can
+   * render an entire dashboard from a single round-trip.
+   */
+  app.get('/overview', async (req, reply) => {
+    const tenant = req.tenant!;
+    const w = Window.safeParse(parseQuery(req.url));
+    if (!w.success) {
+      reply.code(400);
+      return { error: 'invalid_window' };
+    }
+    const { from, to } = w.data;
+    const windowMs = to.getTime() - from.getTime();
+    const prevFrom = new Date(from.getTime() - windowMs);
+    const prevTo = from;
+
+    type DailyRow = {
+      day: Date;
+      launches: bigint;
+      redemptions: bigint;
+      uniqueUsers: bigint;
+    };
+    const [series, prevTotals, byStatus, topTemplates, redeemEvents, lifecycle] =
+      await Promise.all([
+        prisma.$queryRaw<DailyRow[]>`
+          SELECT
+            date_trunc('day', "createdAt")             AS day,
+            COUNT(*)::bigint                            AS launches,
+            COUNT("redeemedAt")::bigint                 AS redemptions,
+            COUNT(DISTINCT "userIdHash")::bigint        AS "uniqueUsers"
+          FROM "Launch"
+          WHERE "tenantId" = ${tenant.id}
+            AND "createdAt" >= ${from}
+            AND "createdAt" <  ${to}
+          GROUP BY day
+          ORDER BY day ASC
+        `,
+        prisma.$queryRaw<Array<{ launches: bigint; redemptions: bigint }>>`
+          SELECT
+            COUNT(*)::bigint           AS launches,
+            COUNT("redeemedAt")::bigint AS redemptions
+          FROM "Launch"
+          WHERE "tenantId" = ${tenant.id}
+            AND "createdAt" >= ${prevFrom}
+            AND "createdAt" <  ${prevTo}
+        `,
+        prisma.labInstance.groupBy({
+          by: ['status'],
+          where: { tenantId: tenant.id, isPrewarm: false },
+          _count: { _all: true },
+        }),
+        prisma.launch.groupBy({
+          by: ['templateId'],
+          where: {
+            tenantId: tenant.id,
+            createdAt: { gte: from, lt: to },
+          },
+          _count: { _all: true },
+          orderBy: { _count: { templateId: 'desc' } },
+          take: 5,
+        }),
+        prisma.usageEvent.count({
+          where: {
+            tenantId: tenant.id,
+            kind: 'launch_redeemed',
+            occurredAt: { gte: from, lt: to },
+          },
+        }),
+        prisma.usageEvent.findMany({
+          where: {
+            tenantId: tenant.id,
+            kind: {
+              in: [
+                'instance_ready',
+                'instance_paused',
+                'instance_resumed',
+                'instance_terminated',
+              ],
+            },
+            occurredAt: { gte: from, lt: to },
+            instanceId: { not: null },
+          },
+          orderBy: { occurredAt: 'asc' },
+          select: { instanceId: true, kind: true, occurredAt: true },
+        }),
+      ]);
+
+    // Compute total compute-hours by replaying the lifecycle stream.
+    let computeHours = 0;
+    const openByInstance = new Map<string, Date>();
+    for (const ev of lifecycle) {
+      const id = ev.instanceId!;
+      if (ev.kind === 'instance_ready' || ev.kind === 'instance_resumed') {
+        openByInstance.set(id, ev.occurredAt);
+      } else {
+        const start = openByInstance.get(id);
+        if (start) {
+          computeHours += Math.max(
+            0,
+            (ev.occurredAt.getTime() - start.getTime()) / 3_600_000,
+          );
+          openByInstance.delete(id);
+        }
+      }
+    }
+    for (const [, start] of openByInstance) {
+      computeHours += Math.max(0, (to.getTime() - start.getTime()) / 3_600_000);
+    }
+
+    const templates = await prisma.labTemplate.findMany({
+      where: {
+        tenantId: tenant.id,
+        id: { in: topTemplates.map((t) => t.templateId) },
+      },
+      select: { id: true, name: true },
+    });
+    const tmplMap = new Map(templates.map((t) => [t.id, t.name]));
+
+    const launches = series.reduce((s, r) => s + Number(r.launches), 0);
+    const redemptions = series.reduce((s, r) => s + Number(r.redemptions), 0);
+    const prev = prevTotals[0] ?? { launches: 0n, redemptions: 0n };
+    const prevLaunches = Number(prev.launches);
+    const prevRedemptions = Number(prev.redemptions);
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      previous: {
+        from: prevFrom.toISOString(),
+        to: prevTo.toISOString(),
+      },
+      kpi: {
+        launches,
+        launchesDelta: pctDelta(launches, prevLaunches),
+        redemptions,
+        redemptionsDelta: pctDelta(redemptions, prevRedemptions),
+        redemptionRate: launches > 0 ? Math.round((redemptions / launches) * 100) : 0,
+        uniqueUsers: countUnique(series),
+        computeHours: Math.round(computeHours * 10) / 10,
+        redemptionEvents: redeemEvents,
+      },
+      series: series.map((r) => ({
+        day: r.day.toISOString().slice(0, 10),
+        launches: Number(r.launches),
+        redemptions: Number(r.redemptions),
+        uniqueUsers: Number(r.uniqueUsers),
+      })),
+      statusBreakdown: byStatus.map((r) => ({
+        status: r.status,
+        count: countAll(r._count),
+      })),
+      topTemplates: topTemplates.map((t) => ({
+        templateId: t.templateId,
+        templateName: tmplMap.get(t.templateId) ?? '(deleted)',
+        launches: countAll(t._count),
+      })),
+    };
+  });
+
+  /**
    * GET /api/v1/reports/usage?from=&to=
    * Per-day rollup of launches and redemptions across the window. Default
    * window is the last 30 days.
@@ -624,6 +786,18 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
 function csvEscape(s: string): string {
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
   return s;
+}
+
+function pctDelta(curr: number, prev: number): number {
+  if (prev === 0) return curr > 0 ? 100 : 0;
+  return Math.round(((curr - prev) / prev) * 1000) / 10;
+}
+
+function countUnique(rows: Array<{ uniqueUsers: bigint }>): number {
+  // Crude upper bound: sum of distinct-per-day. Good enough for the tile.
+  // True window-distinct would need another query; the per-template page
+  // already reports it precisely.
+  return rows.reduce((s, r) => s + Number(r.uniqueUsers), 0);
 }
 
 function parseQuery(url: string): Record<string, string> {
