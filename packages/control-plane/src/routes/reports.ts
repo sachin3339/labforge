@@ -158,7 +158,7 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
     return {
       from: from.toISOString(),
       to: to.toISOString(),
-      templates: rows,
+      rows,
     };
   });
 
@@ -221,7 +221,7 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
       },
       _count: { _all: true },
     });
-    const redeemMap = new Map(redemptions.map((r) => [r.templateId, r._count._all]));
+    const redeemMap = new Map(redemptions.map((r) => [r.templateId, countAll(r._count)]));
 
     const templates = await prisma.labTemplate.findMany({
       where: { tenantId: tenant.id },
@@ -234,9 +234,9 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
       hours: number;
       instances: number;
       redemptions: number;
-      costUsd: number;
-      revenueUsd: number;
-      marginUsd: number;
+      cost: number;
+      revenue: number;
+      margin: number;
     };
     const rowMap = new Map<string, Row>();
     for (const t of templates) {
@@ -248,9 +248,9 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
         hours: 0,
         instances: 0,
         redemptions: redeems,
-        costUsd: 0,
-        revenueUsd: (spec.priceListUsd ?? 0) * redeems,
-        marginUsd: 0,
+        cost: 0,
+        revenue: (spec.priceListUsd ?? 0) * redeems,
+        margin: 0,
       });
     }
 
@@ -267,38 +267,38 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
       const hours = Math.max(0, (endMs - startMs) / 3600_000);
       row.hours += hours;
       row.instances += 1;
-      row.costUsd += hours * (spec.costPerHourUsd ?? 0);
+      row.cost += hours * (spec.costPerHourUsd ?? 0);
     }
     for (const row of rowMap.values()) {
-      row.marginUsd = row.revenueUsd - row.costUsd;
+      row.margin = row.revenue - row.cost;
       row.hours = Math.round(row.hours * 100) / 100;
-      row.costUsd = Math.round(row.costUsd * 100) / 100;
-      row.revenueUsd = Math.round(row.revenueUsd * 100) / 100;
-      row.marginUsd = Math.round(row.marginUsd * 100) / 100;
+      row.cost = Math.round(row.cost * 100) / 100;
+      row.revenue = Math.round(row.revenue * 100) / 100;
+      row.margin = Math.round(row.margin * 100) / 100;
     }
-    const rows = Array.from(rowMap.values()).sort((a, b) => b.costUsd - a.costUsd);
+    const rows = Array.from(rowMap.values()).sort((a, b) => b.cost - a.cost);
     const totals = rows.reduce(
       (s, r) => ({
         hours: s.hours + r.hours,
         instances: s.instances + r.instances,
         redemptions: s.redemptions + r.redemptions,
-        costUsd: s.costUsd + r.costUsd,
-        revenueUsd: s.revenueUsd + r.revenueUsd,
-        marginUsd: s.marginUsd + r.marginUsd,
+        cost: s.cost + r.cost,
+        revenue: s.revenue + r.revenue,
+        margin: s.margin + r.margin,
       }),
-      { hours: 0, instances: 0, redemptions: 0, costUsd: 0, revenueUsd: 0, marginUsd: 0 },
+      { hours: 0, instances: 0, redemptions: 0, cost: 0, revenue: 0, margin: 0 },
     );
 
     return {
       from: from.toISOString(),
       to: to.toISOString(),
-      templates: rows,
+      rows,
       totals: {
         ...totals,
         hours: Math.round(totals.hours * 100) / 100,
-        costUsd: Math.round(totals.costUsd * 100) / 100,
-        revenueUsd: Math.round(totals.revenueUsd * 100) / 100,
-        marginUsd: Math.round(totals.marginUsd * 100) / 100,
+        cost: Math.round(totals.cost * 100) / 100,
+        revenue: Math.round(totals.revenue * 100) / 100,
+        margin: Math.round(totals.margin * 100) / 100,
       },
     };
   });
@@ -399,7 +399,7 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
       from: from.toISOString(),
       to: to.toISOString(),
       batchId: batchId ?? null,
-      students,
+      rows: students,
     };
   });
 
