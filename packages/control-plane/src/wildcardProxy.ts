@@ -64,6 +64,9 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
       return;
     }
 
+    if (decision.injectAuth) {
+      req.raw.headers.authorization = decision.injectAuth;
+    }
     reply.hijack();
     proxy.web(req.raw, reply.raw, {
       target: `${decision.scheme}://${decision.upstream}`,
@@ -98,6 +101,9 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
         socket.destroy();
         return;
       }
+      if (decision.injectAuth) {
+        req.headers.authorization = decision.injectAuth;
+      }
       proxy.ws(req, socket, head, {
         target: `${decision.scheme}://${decision.upstream}`,
         changeOrigin: false,
@@ -117,7 +123,18 @@ function isLabHost(host: string): boolean {
 }
 
 type Decision =
-  | { kind: 'ok'; upstream: string; scheme: 'http' | 'https'; instanceId: string }
+  | {
+      kind: 'ok';
+      upstream: string;
+      scheme: 'http' | 'https';
+      instanceId: string;
+      /**
+       * If set, the proxy will overwrite the incoming `Authorization` header
+       * with this value before forwarding. Used for Kasm desktops so that the
+       * browser never sees the upstream HTTP-Basic challenge popup.
+       */
+      injectAuth?: string;
+    }
   | { kind: 'warming'; templateName: string }
   | { kind: 'unavailable'; reason: string; code: number }
   | { kind: 'error'; error: string; code: number };
@@ -190,8 +207,20 @@ async function resolveAndAuth(
   // Read upstream scheme from the template spec. Kasm-based desktops only
   // accept HTTPS upstream; everything else defaults to plain HTTP. We resolve
   // it BEFORE the readiness probe so the probe targets the correct scheme.
-  const spec = (instance.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
+  const spec = (instance.template.spec ?? {}) as {
+    upstreamScheme?: 'http' | 'https';
+    env?: Record<string, string>;
+  };
   const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
+
+  // Kasm desktops gate the noVNC UI behind HTTP Basic auth (user=`kasm_user`,
+  // password=`VNC_PW`). We inject that header server-side so students never
+  // see the browser's native sign-in popup.
+  const vncPw = spec.env?.VNC_PW;
+  const injectAuth =
+    scheme === 'https' && vncPw
+      ? `Basic ${Buffer.from(`kasm_user:${vncPw}`).toString('base64')}`
+      : undefined;
 
   if (instance.runtimeId && !(await fastIsReady(instance.runtimeId, instance.upstream, scheme))) {
     return { kind: 'warming', templateName: instance.template.name };
@@ -207,7 +236,13 @@ async function resolveAndAuth(
     })
     .catch(() => {});
 
-  return { kind: 'ok', upstream: instance.upstream, scheme, instanceId: instance.id };
+  return {
+    kind: 'ok',
+    upstream: instance.upstream,
+    scheme,
+    instanceId: instance.id,
+    injectAuth,
+  };
 }
 
 async function fastIsReady(
