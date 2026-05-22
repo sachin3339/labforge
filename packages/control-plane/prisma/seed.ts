@@ -144,13 +144,25 @@ async function main() {
       image: 'dockurr/windows:latest',
       runtime: 'vm',
       port: 8006,
-      cpu: 4,
+      cpu: 6,
       memoryMb: 8192,
       env: {
         VERSION: '11',
         RAM_SIZE: '8G',
-        CPU_CORES: '4',
+        // Bumped from 4 → 6: gives Windows headroom for the DWM compositor
+        // and noVNC encoder so the desktop doesn't lag while the student is
+        // running anything else.
+        CPU_CORES: '6',
         DISK_SIZE: '64G',
+        // Display tuning (Tier 1 of the lag fix):
+        //   - smaller framebuffer = fewer bytes per frame
+        //   - virtio-gpu (GPU=Y) gives a much smoother compositor
+        //   - explicit DISPLAY avoids dockur fallback quirks
+        DISPLAY: 'web',
+        WIDTH: '1600',
+        HEIGHT: '900',
+        KVM: 'Y',
+        GPU: 'Y',
       },
       workspaceDir: 'C:\\Users\\Docker',
       // /storage holds the whole Windows qemu disk \u2014 persisting it means
