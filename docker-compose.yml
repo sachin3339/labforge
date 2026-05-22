@@ -1,0 +1,101 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labforge
+      POSTGRES_PASSWORD: labforge
+      POSTGRES_DB: labforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U labforge']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  control-plane:
+    # NOTE: This service is opt-in via the `containerised` profile because on
+    # Windows + Podman, the user socket bind mount can't be passed through
+    # podman-compose's path translation (it rewrites /run/... to /mnt/c/run/...).
+    # For dev on Windows/Podman, run the control plane natively:
+    #     pnpm --filter @labforge/control-plane dev
+    # It auto-loads .env.local and talks to Postgres+Redis via localhost and
+    # to Podman via the docker-compat named pipe (//./pipe/docker_engine).
+    # For Linux Docker users:
+    #     podman-compose --profile containerised up -d
+    profiles: ['containerised']
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://labforge:labforge@postgres:5432/labforge?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_PRIVATE_KEY_B64: ${JWT_PRIVATE_KEY_B64}
+      JWT_PUBLIC_KEY_B64: ${JWT_PUBLIC_KEY_B64}
+      JWT_ISSUER: labforge-dev
+      JWT_LAUNCH_TTL_SECONDS: 60
+      JWT_SESSION_TTL_SECONDS: 14400
+      PUBLIC_API_URL: http://lab.localhost:4000
+      PUBLIC_LAB_DOMAIN: lab.localhost
+      PUBLIC_GATEWAY_URL: http://lab.localhost:4000
+      RUNTIME: docker
+      DOCKER_HOST_SOCKET: /var/run/docker.sock
+      DOCKER_NETWORK: labforge_labnet
+      LAB_DEFAULT_CPU: 1
+      LAB_DEFAULT_MEMORY_MB: 1024
+      LAB_IDLE_TIMEOUT_MINUTES: 10
+      LAB_MAX_DURATION_MINUTES: 240
+      PREWARM_ENABLED: 'true'
+      PREWARM_INTERVAL_SECONDS: 15
+      SEED_TENANT_NAME: Demo Trainers
+      SEED_TENANT_API_KEY: ${SEED_TENANT_API_KEY:-dev-api-key-change-me}
+    ports:
+      - '4000:4000'
+    volumes:
+      # Mount the container engine socket so the control plane can spin up
+      # sibling containers.
+      # NOTE: On Windows, podman-compose prepends /mnt/c/ to absolute paths
+      # so we use the long-form syntax which is passed through unchanged.
+      - type: bind
+        source: ${CONTAINER_SOCKET:-/run/user/1000/podman/podman.sock}
+        target: /var/run/docker.sock
+    networks:
+      - default
+      - labnet
+    command: >
+      sh -c "pnpm --filter @labforge/control-plane exec prisma db push --schema=prisma/schema.prisma --accept-data-loss &&
+             pnpm --filter @labforge/control-plane exec tsx prisma/seed.ts &&
+             node dist/server.js"
+
+networks:
+  default:
+    driver: bridge
+  labnet:
+    name: labforge_labnet
+    driver: bridge
+
+volumes:
+  pgdata:

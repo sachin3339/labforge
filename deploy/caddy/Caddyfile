@@ -1,0 +1,42 @@
+# LabForge production Caddyfile.
+# Wildcard TLS via Cloudflare DNS-01. CLOUDFLARE_API_TOKEN must be exported
+# in the Caddy container env (see docker-compose.prod.yml).
+#
+# Routes:
+#   admin.environments.learnlytica.com → admin-ui:4100
+#   api.environments.learnlytica.com   → control-plane:4000
+#   *.lab.environments.learnlytica.com → control-plane:4000 (wildcard subdomain
+#       proxy inside the control plane forwards to the right lab container)
+
+{
+    email ops@learnlytica.com
+}
+
+# ---- admin UI ----
+admin.environments.learnlytica.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    encode gzip
+    reverse_proxy admin-ui:4100
+}
+
+# ---- control plane API ----
+api.environments.learnlytica.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    encode gzip
+    reverse_proxy control-plane:4000
+}
+
+# ---- wildcard for live lab subdomains ----
+*.lab.environments.learnlytica.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    # WebSocket upgrades flow through unchanged.
+    reverse_proxy control-plane:4000 {
+        flush_interval -1
+    }
+}

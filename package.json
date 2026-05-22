@@ -1,0 +1,29 @@
+{
+  "name": "labforge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "LabForge — on-demand, browser-based lab environments for trainers and LMSs.",
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --filter @labforge/control-plane dev",
+    "dev:admin": "pnpm --filter @labforge/admin-ui dev",
+    "prisma:generate": "pnpm --filter @labforge/control-plane prisma:generate",
+    "prisma:migrate": "pnpm --filter @labforge/control-plane prisma:migrate",
+    "prisma:seed": "pnpm --filter @labforge/control-plane prisma:seed",
+    "stack:up": "docker compose up -d --build",
+    "stack:up:podman": "podman-compose up -d --build",
+    "stack:down": "docker compose down -v",
+    "stack:down:podman": "podman-compose down -v",
+    "stack:logs": "docker compose logs -f control-plane",
+    "stack:logs:podman": "podman-compose logs -f control-plane",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  },
+  "engines": {
+    "node": ">=20.10.0",
+    "pnpm": ">=9.0.0"
+  }
+}

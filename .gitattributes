@@ -1,0 +1,17 @@
+# Default: normalize text to LF in repo, CRLF on Windows checkout
+* text=auto eol=lf
+
+# Force LF for shell scripts (they MUST be LF on Linux)
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Force LF for these too
+Dockerfile text eol=lf
+Caddyfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.ico binary

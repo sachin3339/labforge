@@ -1,0 +1,139 @@
+# LabForge production stack — single OVH box.
+#
+# Run on the OVH Mumbai box (148.113.1.66):
+#   cd /opt/labforge
+#   cp deploy/.env.prod.example deploy/.env.prod
+#   # edit deploy/.env.prod: paste CLOUDFLARE_API_TOKEN, JWT keys, tenant key
+#   docker compose --env-file deploy/.env.prod -f deploy/docker-compose.prod.yml up -d --build
+#
+# DNS prerequisites (Cloudflare, grey-cloud / proxied=OFF):
+#   A   admin.environments       148.113.1.66
+#   A   api.environments         148.113.1.66
+#   A   *.lab.environments       148.113.1.66
+#
+# Stack:
+#   caddy        80/443  — wildcard TLS via Cloudflare DNS-01, reverse proxy
+#   admin-ui     4100    — Next.js admin console
+#   control-plane 4000   — Fastify API + wildcard lab subdomain proxy
+#   postgres     5432    — Prisma DB
+#   redis        6379    — queue + cache
+services:
+  caddy:
+    build:
+      context: ./caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp' # HTTP/3
+    environment:
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - admin-ui
+      - control-plane
+    networks:
+      - default
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: labforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-labforge}
+      POSTGRES_DB: labforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U labforge']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      LOG_LEVEL: info
+      DATABASE_URL: postgresql://labforge:${POSTGRES_PASSWORD:-labforge}@postgres:5432/labforge?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_PRIVATE_KEY_B64: ${JWT_PRIVATE_KEY_B64}
+      JWT_PUBLIC_KEY_B64: ${JWT_PUBLIC_KEY_B64}
+      JWT_ISSUER: ${JWT_ISSUER:-labforge}
+      JWT_LAUNCH_TTL_SECONDS: 60
+      JWT_SESSION_TTL_SECONDS: 14400
+      # Public addressing — must match the Cloudflare DNS records above.
+      PUBLIC_API_URL: https://api.environments.learnlytica.com
+      PUBLIC_LAB_DOMAIN: lab.environments.learnlytica.com
+      PUBLIC_GATEWAY_URL: https://lab.environments.learnlytica.com
+      RUNTIME: docker
+      DOCKER_HOST_SOCKET: /var/run/docker.sock
+      DOCKER_NETWORK: labforge_labnet
+      LAB_DEFAULT_CPU: 1
+      LAB_DEFAULT_MEMORY_MB: 1024
+      LAB_IDLE_TIMEOUT_MINUTES: 15
+      LAB_MAX_DURATION_MINUTES: 480
+      LAB_ALLOW_PRIVILEGED: 'false'
+      PREWARM_ENABLED: 'true'
+      PREWARM_INTERVAL_SECONDS: 15
+      SEED_TENANT_NAME: ${SEED_TENANT_NAME:-Learnlytica}
+      SEED_TENANT_API_KEY: ${SEED_TENANT_API_KEY}
+    volumes:
+      # Host docker socket — control plane spins up sibling lab containers.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - default
+      - labnet
+    command: >
+      sh -c "pnpm --filter @labforge/control-plane exec prisma db push --schema=prisma/schema.prisma --accept-data-loss &&
+             pnpm --filter @labforge/control-plane exec tsx prisma/seed.ts &&
+             node dist/server.js"
+
+  admin-ui:
+    build:
+      context: ..
+      dockerfile: packages/admin-ui/Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      LABFORGE_API_URL: http://control-plane:4000
+    depends_on:
+      - control-plane
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
+  labnet:
+    name: labforge_labnet
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

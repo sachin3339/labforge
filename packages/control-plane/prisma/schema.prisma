@@ -1,0 +1,132 @@
+// Prisma schema for LabForge control plane.
+// Run: pnpm prisma:migrate -- --name init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  apiKey    String   @unique
+  /// HMAC secret for outbound webhooks to this tenant's LMS.
+  webhookSecret String @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  templates LabTemplate[]
+  instances LabInstance[]
+  launches  Launch[]
+}
+
+model LabTemplate {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?
+  /// Validated against LabTemplateSpec (zod) at write time.
+  spec        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  instances LabInstance[]
+  launches  Launch[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+}
+
+model Launch {
+  id            String   @id @default(cuid())
+  tenantId      String
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId    String
+  template      LabTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  userIdHash    String
+  userDisplayName String?
+  durationMinutes Int
+  returnUrl     String?
+  webhookUrl    String?
+  context       Json?
+
+  /// JTI of the launch token; null once redeemed (single-use).
+  tokenJti      String?  @unique
+  redeemedAt    DateTime?
+  instanceId    String?  @unique
+  instance      LabInstance? @relation(fields: [instanceId], references: [id])
+
+  createdAt     DateTime @default(now())
+  expiresAt     DateTime
+
+  @@index([tenantId, createdAt])
+}
+
+enum InstanceStatus {
+  pending
+  provisioning
+  ready
+  idle
+  paused
+  terminating
+  terminated
+  failed
+}
+
+model LabInstance {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  templateId  String
+  template    LabTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  status      InstanceStatus @default(pending)
+  /// True while this instance is sitting in the warm pool unassigned.
+  isPrewarm   Boolean  @default(false)
+
+  /// Runtime-specific handle (docker container id, k8s pod name, ...).
+  runtimeId   String?
+  /// Host:port the gateway routes to (e.g. "10.0.0.5:32145").
+  upstream    String?
+  /// Public subdomain segment used for {sub}.lab.example.com.
+  subdomain   String   @unique
+
+  userIdHash  String?
+  lastSeenAt  DateTime?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+  terminatedAt DateTime?
+
+  launch      Launch?
+  gradingResults GradingResult[]
+
+  @@index([tenantId, status])
+  @@index([templateId, status, isPrewarm])
+}
+
+model GradingResult {
+  id          String   @id @default(cuid())
+  tenantId    String
+  instanceId  String
+  instance    LabInstance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  launchId    String?
+  templateId  String
+
+  score       Float
+  maxScore    Float
+  passed      Boolean
+  /// Per-check details: id, passed, exitCode, stdout, stderr, durationMs, error?
+  checks      Json
+  createdAt   DateTime @default(now())
+
+  @@index([tenantId, createdAt])
+  @@index([instanceId, createdAt])
+  @@index([launchId])
+}
