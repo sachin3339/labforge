@@ -43,5 +43,11 @@ function makeMockRuntime(): LabRuntime {
     async exec() {
       return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
     },
+    async logs() {
+      return '';
+    },
+    async restart() {
+      /* noop */
+    },
   };
 }

@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { nanoid } from 'nanoid';
+import { z } from 'zod';
 import {
   BatchLaunchRequest,
   type BatchLaunchItem,
@@ -11,6 +12,7 @@ import { prisma } from '../db.js';
 import { authenticateTenant } from '../auth/apiKey.js';
 import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
+import { destroyInstance } from '../orchestrator.js';
 
 /**
  * Admin-issued bulk launch URLs. One call → N single-use, long-lived
@@ -249,5 +251,209 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
       data: { tokenJti: null, expiresAt: new Date() },
     });
     return { revoked: result.count };
+  });
+
+  // ----- Terminate entire batch (kill all live instances + revoke URLs) -----
+  app.post('/:batchId/terminate', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { batchId } = req.params as { batchId: string };
+    const body = z
+      .object({ deleteVolumes: z.boolean().optional() })
+      .safeParse(req.body ?? {});
+    if (!body.success) {
+      reply.code(400);
+      return { error: 'invalid_body' };
+    }
+
+    const launches = await prisma.launch.findMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+      include: { instance: { select: { id: true, status: true } } },
+    });
+    if (launches.length === 0) {
+      reply.code(404);
+      return { error: 'batch_not_found' };
+    }
+
+    // Best-effort: terminate every live instance, then revoke the URLs.
+    let terminated = 0;
+    for (const l of launches) {
+      if (
+        l.instance &&
+        !['terminated', 'failed'].includes(l.instance.status)
+      ) {
+        try {
+          await destroyInstance(l.instance.id, {
+            deleteVolume: body.data.deleteVolumes,
+          });
+          terminated += 1;
+        } catch {
+          // swallow; status update inside destroyInstance still records intent
+        }
+      }
+    }
+
+    const revoked = await prisma.launch.updateMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+      data: { tokenJti: null, expiresAt: new Date() },
+    });
+
+    return { ok: true, terminated, revoked: revoked.count };
+  });
+
+  // ----- Extend a batch (bump expiresAt on all launches + live instances) -----
+  app.post('/:batchId/extend', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { batchId } = req.params as { batchId: string };
+    const body = z
+      .object({ extendHours: z.number().int().positive().max(8760) })
+      .safeParse(req.body);
+    if (!body.success) {
+      reply.code(400);
+      return { error: 'invalid_body', issues: body.error.issues };
+    }
+    const launches = await prisma.launch.findMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+      include: { instance: { select: { id: true } } },
+    });
+    if (launches.length === 0) {
+      reply.code(404);
+      return { error: 'batch_not_found' };
+    }
+    const bumpMs = body.data.extendHours * 3600_000;
+
+    // Note: this does NOT re-sign JWTs. A JWT past its `exp` will be rejected
+    // on redemption regardless of DB. For long extensions past the original
+    // 30-day token window, use `regenerate` per seat instead.
+    await prisma.$transaction([
+      ...launches.map((l) =>
+        prisma.launch.update({
+          where: { id: l.id },
+          data: { expiresAt: new Date(l.expiresAt.getTime() + bumpMs) },
+        }),
+      ),
+      ...launches
+        .filter((l) => l.instance)
+        .map((l) =>
+          prisma.labInstance.update({
+            where: { id: l.instance!.id },
+            data: {
+              expiresAt: {
+                // Using a raw bump keeps each instance aligned with its own
+                // launch's previous timeline.
+                set: new Date(
+                  (l.expiresAt.getTime() + bumpMs),
+                ),
+              },
+            },
+          }),
+        ),
+    ]);
+    return { ok: true, extendedSeats: launches.length, extendHours: body.data.extendHours };
+  });
+
+  // ----- Add seats to an existing batch -----
+  app.post('/:batchId/add-seats', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { batchId } = req.params as { batchId: string };
+    const body = z
+      .object({
+        count: z.number().int().positive().max(500),
+        seatNames: z.array(z.string()).optional(),
+      })
+      .safeParse(req.body);
+    if (!body.success) {
+      reply.code(400);
+      return { error: 'invalid_body', issues: body.error.issues };
+    }
+    if (body.data.seatNames && body.data.seatNames.length !== body.data.count) {
+      reply.code(400);
+      return { error: 'seat_names_count_mismatch' };
+    }
+
+    // Crib settings from the existing first launch so the new seats land
+    // in the same template, with the same TTL window and durationMinutes.
+    const existing = await prisma.launch.findMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+      orderBy: { createdAt: 'asc' },
+      include: { template: true },
+    });
+    if (existing.length === 0) {
+      reply.code(404);
+      return { error: 'batch_not_found' };
+    }
+    const first = existing[0]!;
+    const template = first.template;
+    const baseCtx = (first.context ?? {}) as Record<string, unknown>;
+    const label = String(baseCtx.batchLabel ?? batchId);
+    // TTL = whatever the original first seat was signed for, anchored to now.
+    const ttlSeconds = Math.max(
+      1,
+      Math.floor((first.expiresAt.getTime() - first.createdAt.getTime()) / 1000),
+    );
+    const startingSeat = existing.length;
+
+    const seatIndices = Array.from(
+      { length: body.data.count },
+      (_, i) => startingSeat + i + 1,
+    );
+    const items: BatchLaunchItem[] = await Promise.all(
+      seatIndices.map(async (seat, idx) => {
+        const launchId = nanoid(16);
+        const jti = nanoid(24);
+        const displayName =
+          body.data.seatNames?.[idx] ?? `${label} #${String(seat).padStart(2, '0')}`;
+        const seatUserId = `batch:${batchId}:${seat}`;
+        const userIdHash = hashUserId(seatUserId);
+
+        const { token, expiresAt } = await signLaunchToken(
+          {
+            sub: launchId,
+            jti,
+            tenantId: tenant.id,
+            templateId: template.id,
+            userIdHash,
+          },
+          { ttlSeconds },
+        );
+
+        await prisma.launch.create({
+          data: {
+            id: launchId,
+            tenantId: tenant.id,
+            templateId: template.id,
+            userIdHash,
+            userDisplayName: displayName,
+            durationMinutes: first.durationMinutes,
+            returnUrl: first.returnUrl,
+            webhookUrl: first.webhookUrl,
+            context: { batchId, batchLabel: label, seat },
+            tokenJti: jti,
+            expiresAt,
+          },
+        });
+
+        const launchUrl = `${config.PUBLIC_API_URL}/launch/redeem?t=${encodeURIComponent(token)}`;
+        return {
+          launchId,
+          seat,
+          displayName,
+          launchUrl,
+          expiresAt: expiresAt.toISOString(),
+        };
+      }),
+    );
+    return { batchId, added: items.length, launches: items };
   });
 };

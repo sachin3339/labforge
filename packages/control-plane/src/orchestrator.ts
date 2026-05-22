@@ -269,10 +269,6 @@ export async function resumeInstance(
   return updated;
 }
 
-/**
- * Poll the runtime's isReady() until it returns true or the deadline
- * elapses. Returns true if ready, false on timeout.
- */
 export async function waitUntilReady(
   runtimeId: string,
   upstream: string,
@@ -285,6 +281,50 @@ export async function waitUntilReady(
     await new Promise((r) => setTimeout(r, 1000));
   }
   return false;
+}
+
+/**
+ * Restart an instance in place (docker restart). Preserves the runtimeId
+ * and the mounted volumes, so the student's data and the subdomain stay
+ * the same. Useful for unfreezing a wedged container.
+ */
+export async function restartInstance(instanceId: string): Promise<void> {
+  const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
+  if (!inst || !inst.runtimeId) return;
+  await getRuntime().restart(inst.runtimeId);
+  await prisma.labInstance.update({
+    where: { id: instanceId },
+    data: {
+      status: 'ready',
+      suspendedAt: null,
+      lastActivityAt: new Date(),
+    },
+  });
+}
+
+/**
+ * Extend an instance's expiry. The reaper enforces `expiresAt` on every
+ * tick, so this is the single source of truth for "keep this lab alive
+ * longer". Caller is responsible for any ACL check.
+ */
+export async function extendInstance(
+  instanceId: string,
+  newExpiresAt: Date,
+): Promise<LabInstance> {
+  return prisma.labInstance.update({
+    where: { id: instanceId },
+    data: { expiresAt: newExpiresAt },
+  });
+}
+
+/** Tail container logs (best-effort). Returns empty string if gone. */
+export async function getInstanceLogs(
+  instanceId: string,
+  tail = 200,
+): Promise<string> {
+  const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
+  if (!inst || !inst.runtimeId) return '';
+  return getRuntime().logs(inst.runtimeId, { tail });
 }
 
 /** Public URL the gateway will route to this instance. */

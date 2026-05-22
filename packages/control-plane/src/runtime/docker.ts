@@ -201,6 +201,45 @@ export class DockerRuntime implements LabRuntime {
     }
   }
 
+  /**
+   * Tail the most recent log lines from a container. Returns a single
+   * string with newlines preserved; truncated to the last `tail` lines.
+   * Best-effort: returns '' if the container is gone or the logs API
+   * stream behaves oddly.
+   */
+  async logs(runtimeId: string, opts?: { tail?: number }): Promise<string> {
+    const tail = Math.min(Math.max(opts?.tail ?? 200, 1), 5_000);
+    try {
+      const c = this.docker.getContainer(runtimeId);
+      const buf = (await c.logs({
+        stdout: true,
+        stderr: true,
+        tail,
+        follow: false,
+        timestamps: false,
+      })) as unknown as Buffer;
+      // dockerode returns a multiplexed stream when TTY is off. Each frame
+      // is an 8-byte header (stream type + 4 zero + 4-byte BE length)
+      // followed by `length` bytes of payload. We just strip headers; the
+      // payload is what the admin wants to read.
+      return demuxDockerLogs(buf);
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number; message?: string };
+      if (e.statusCode === 404) return '';
+      throw err;
+    }
+  }
+
+  async restart(runtimeId: string): Promise<void> {
+    try {
+      // 30s grace period to let the workload flush. Matches our suspend timeout.
+      await this.docker.getContainer(runtimeId).restart({ t: 30 });
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      if (e.statusCode !== 404) throw err;
+    }
+  }
+
   async exec(runtimeId: string, req: ExecRequest): Promise<ExecResult> {
     const c = this.docker.getContainer(runtimeId);
     const maxBytes = req.maxOutputBytes ?? 64 * 1024;
@@ -314,4 +353,30 @@ export class DockerRuntime implements LabRuntime {
     // Tiny grace period so subsequent inspect() succeeds on slow disks.
     await sleep(100);
   }
+}
+
+/**
+ * Demux the docker logs multiplexed framing into a single utf-8 string.
+ * Each frame: [stream(1)][zero(3)][lengthBE(4)][payload(length)].
+ * If the buffer doesn't look multiplexed (e.g. TTY output), return as-is.
+ */
+function demuxDockerLogs(buf: Buffer): string {
+  if (buf.length === 0) return '';
+  const out: Buffer[] = [];
+  let i = 0;
+  while (i + 8 <= buf.length) {
+    const streamType = buf[i];
+    // Valid stream types from docker are 0 (stdin), 1 (stdout), 2 (stderr).
+    // Anything else means this isn't multiplexed — fall back to raw.
+    if (streamType === undefined || streamType > 2) {
+      return buf.toString('utf8');
+    }
+    const len = buf.readUInt32BE(i + 4);
+    const start = i + 8;
+    const end = start + len;
+    if (end > buf.length) break;
+    out.push(buf.subarray(start, end));
+    i = end;
+  }
+  return Buffer.concat(out).toString('utf8');
 }

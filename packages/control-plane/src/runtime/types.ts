@@ -67,4 +67,8 @@ export interface LabRuntime {
   destroyVolume(name: string): Promise<void>;
   /** Execute a command inside the running container/pod. */
   exec(runtimeId: string, req: ExecRequest): Promise<ExecResult>;
+  /** Tail the last N lines of combined stdout+stderr (best-effort). */
+  logs(runtimeId: string, opts?: { tail?: number }): Promise<string>;
+  /** Restart the container/pod in place (stop + start). */
+  restart(runtimeId: string): Promise<void>;
 }
