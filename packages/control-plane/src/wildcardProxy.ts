@@ -26,24 +26,9 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     timeout: 60_000,
   });
 
-  // http-proxy emits this right before the outgoing request is sent. We use
-  // it to inject the Kasm HTTP-Basic header (placed on req.headers by the
-  // onRequest hook below). Setting via setHeader guarantees the header is
-  // on the ClientRequest, not just the source IncomingMessage.
-  proxy.on('proxyReq', (proxyReq, req) => {
-    const auth = (req as IncomingMessage).headers['x-labforge-inject-auth'];
-    if (typeof auth === 'string' && auth.length > 0) {
-      proxyReq.setHeader('authorization', auth);
-      proxyReq.removeHeader('x-labforge-inject-auth');
-      const sent = proxyReq.getHeader('authorization');
-      app.log.info(
-        `[proxy] proxyReq injected Authorization (len=${auth.length}, ` +
-          `present-after-set=${sent ? 'yes' : 'no'}, ` +
-          `all-headers=${Object.keys(proxyReq.getHeaders()).join(',')})`,
-      );
-    } else {
-      app.log.info(`[proxy] proxyReq saw NO injectAuth header (keys=${Object.keys((req as IncomingMessage).headers).join(',')})`);
-    }
+  // Strip any client-sent x-labforge-inject-auth so callers can't spoof it.
+  proxy.on('proxyReq', (proxyReq) => {
+    proxyReq.removeHeader('x-labforge-inject-auth');
   });
 
   proxy.on('error', (err, _req, res) => {
@@ -85,11 +70,12 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
     }
 
     if (decision.injectAuth) {
-      req.raw.headers['x-labforge-inject-auth'] = decision.injectAuth;
+      req.raw.headers['authorization'] = decision.injectAuth;
     }
     app.log.info(
       `[proxy] ${req.method} ${req.url} → ${decision.scheme}://${decision.upstream} ` +
-        `injectAuth=${decision.injectAuth ? 'yes' : 'no'}`,
+        `injectAuth=${decision.injectAuth ? 'yes' : 'no'} ` +
+        `auth-on-req=${req.raw.headers['authorization'] ? 'yes' : 'no'}`,
     );
     reply.hijack();
     proxy.web(req.raw, reply.raw, {
@@ -126,7 +112,7 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
         return;
       }
       if (decision.injectAuth) {
-        req.headers['x-labforge-inject-auth'] = decision.injectAuth;
+        req.headers['authorization'] = decision.injectAuth;
       }
       proxy.ws(req, socket, head, {
         target: `${decision.scheme}://${decision.upstream}`,
