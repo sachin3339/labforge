@@ -94,16 +94,36 @@ function forwardHttp(
 ): void {
   const [hostname, portStr] = decision.upstream.split(':');
   const port = Number(portStr);
-  const headers: http.OutgoingHttpHeaders = { ...req.headers };
-  // changeOrigin: the upstream (Kasm) validates Host against container:port.
+
+  // Build outgoing headers from scratch — copying req.headers wholesale can
+  // include hop-by-hop headers (connection: upgrade etc.) that cause Node
+  // to silently drop Authorization. Forward only end-to-end headers.
+  const HOP_BY_HOP = new Set([
+    'connection',
+    'keep-alive',
+    'proxy-authenticate',
+    'proxy-authorization',
+    'te',
+    'trailer',
+    'transfer-encoding',
+    'upgrade',
+    'host',
+    'content-length',
+  ]);
+  const headers: http.OutgoingHttpHeaders = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (v == null) continue;
+    if (HOP_BY_HOP.has(k.toLowerCase())) continue;
+    headers[k] = v;
+  }
+  // changeOrigin: Kasm validates Host against container:port.
   headers.host = decision.upstream;
   if (decision.injectAuth) {
     headers.authorization = decision.injectAuth;
   }
-  // X-Forwarded-For chain
-  const xff = req.headers['x-forwarded-for'];
   const remote = req.socket.remoteAddress ?? '';
-  headers['x-forwarded-for'] = xff ? `${xff}, ${remote}` : remote;
+  const prevXff = req.headers['x-forwarded-for'];
+  headers['x-forwarded-for'] = prevXff ? `${prevXff}, ${remote}` : remote;
 
   const opts: https.RequestOptions = {
     hostname,
@@ -116,7 +136,8 @@ function forwardHttp(
   const requester = decision.scheme === 'https' ? https.request : http.request;
   log.info(
     `[proxy] ${req.method} ${req.url} → ${decision.scheme}://${decision.upstream} ` +
-      `auth=${decision.injectAuth ? 'yes' : 'no'}`,
+      `auth=${headers.authorization ? 'yes' : 'no'} ` +
+      `header-keys=${Object.keys(headers).join(',')}`,
   );
 
   const upstream = requester(opts, (upRes) => {
