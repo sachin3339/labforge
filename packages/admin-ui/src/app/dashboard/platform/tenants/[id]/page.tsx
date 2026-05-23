@@ -34,35 +34,84 @@ export default async function TenantDetailPage({
   }
   const t = res.data.tenant;
 
-  const curlSnippet = `# 1. List your templates
+  const curlSnippet = `# 1. List the templates available to your tenant
 curl -H "Authorization: Bearer ${t.apiKey}" \\
   ${PUBLIC_API}/api/v1/templates
 
-# 2. Create a single-use launch for a student
+# 2. Create a BATCH of long-lived launch URLs (recommended for cohorts).
+#    Returns N independent, single-use URLs valid for ttlHours (default 30 days).
 curl -X POST -H "Authorization: Bearer ${t.apiKey}" \\
   -H "Content-Type: application/json" \\
   -d '{
-    "templateId": "<TEMPLATE_ID>",
-    "userId": "student-12345",
+    "templateId":      "<TEMPLATE_ID>",
+    "label":           "DevOps-Cohort-March",
+    "count":           25,
+    "durationMinutes": 120,
+    "ttlHours":        720,
+    "seatNames":       ["Jane Doe","John Smith"]
+  }' \\
+  ${PUBLIC_API}/api/v1/batches
+# → returns { batchId, launches: [{ launchUrl, displayName, ... }, ...] }
+# Email each launchUrl to the corresponding learner.
+
+# 3. (Alternative) Create a SINGLE short-lived launch — token valid 60s,
+#    intended for an LMS that redirects the student in the same response.
+curl -X POST -H "Authorization: Bearer ${t.apiKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "templateId":      "<TEMPLATE_ID>",
+    "userId":          "student-12345",
     "userDisplayName": "Jane Doe",
     "durationMinutes": 120
   }' \\
   ${PUBLIC_API}/api/v1/launches
-# → returns { "launchUrl": "https://..." } — hand this URL to the student.`;
+
+# 4. Revoke an entire batch (kills live VMs + disables remaining URLs)
+curl -X POST -H "Authorization: Bearer ${t.apiKey}" \\
+  ${PUBLIC_API}/api/v1/batches/<BATCH_ID>/terminate`;
 
   const nodeSnippet = `import fetch from 'node-fetch';
 
 const API = '${PUBLIC_API}';
 const KEY = '${t.apiKey}';
 
-// Create a lab launch URL for one student
-async function createLaunch(templateId, userId, userName) {
-  const res = await fetch(\`\${API}/api/v1/launches\`, {
+const headers = {
+  'Authorization': \`Bearer \${KEY}\`,
+  'Content-Type': 'application/json',
+};
+
+// ---- List templates (use these IDs in createBatch / createLaunch) ----
+async function listTemplates() {
+  const r = await fetch(\`\${API}/api/v1/templates\`, { headers });
+  return (await r.json()).templates;
+}
+
+// ---- Create a batch of N launch URLs (recommended) -----------------
+// One call per cohort. Each URL is independent, long-lived, and
+// boots a fresh VM/lab for the learner who opens it.
+async function createBatch({ templateId, label, count, seatNames }) {
+  const r = await fetch(\`\${API}/api/v1/batches\`, {
     method: 'POST',
-    headers: {
-      'Authorization': \`Bearer \${KEY}\`,
-      'Content-Type': 'application/json',
-    },
+    headers,
+    body: JSON.stringify({
+      templateId,
+      label,            // e.g. "DevOps-Cohort-March"
+      count,            // 1..500
+      durationMinutes: 120,
+      ttlHours: 720,    // URL valid 30 days; lab session = durationMinutes
+      seatNames,        // optional; length must equal count
+      // webhookUrl: 'https://your.app/labforge-events', // optional
+    }),
+  });
+  const data = await r.json();
+  return data.launches;  // [{ launchId, seat, displayName, launchUrl, expiresAt }, ...]
+}
+
+// ---- Create a single launch (LMS-style, token expires in 60s) ------
+async function createLaunch({ templateId, userId, userName }) {
+  const r = await fetch(\`\${API}/api/v1/launches\`, {
+    method: 'POST',
+    headers,
     body: JSON.stringify({
       templateId,
       userId,
@@ -70,16 +119,22 @@ async function createLaunch(templateId, userId, userName) {
       durationMinutes: 120,
     }),
   });
-  const { launchUrl } = await res.json();
-  return launchUrl;  // give this URL to the student
-}`;
+  return (await r.json()).launchUrl;  // redirect the browser here immediately
+}
 
-  const iframeSnippet = `<!-- Embed in your LMS / portal -->
+// ---- Lifecycle -----------------------------------------------------
+async function revokeBatch(batchId)    { await fetch(\`\${API}/api/v1/batches/\${batchId}\`,            { method: 'DELETE', headers }); }
+async function terminateBatch(batchId) { await fetch(\`\${API}/api/v1/batches/\${batchId}/terminate\`, { method: 'POST',   headers }); }`;
+
+  const iframeSnippet = `<!-- Embed a launchUrl returned by /api/v1/batches or /api/v1/launches -->
 <iframe
   src="\${launchUrl}"
   allow="clipboard-read; clipboard-write; fullscreen"
   style="width: 100%; height: 800px; border: 0;"
-></iframe>`;
+></iframe>
+
+<!-- The first request to launchUrl provisions the VM/container,
+     sets a session cookie, then redirects into the live lab. -->`;
 
   return (
     <div className="space-y-6">
@@ -123,13 +178,19 @@ async function createLaunch(templateId, userId, userName) {
       <section className="card space-y-3">
         <h2 className="text-sm font-semibold">Quick start — curl</h2>
         <p className="text-xs text-ink-900/60">
-          Two-step integration: list templates, then create a launch URL per student.
+          The standard flow: list templates, then create a <strong>batch</strong>{' '}
+          of long-lived launch URLs (one per learner). Each URL boots a
+          fresh isolated VM/lab the moment the learner opens it.
         </p>
         <CodeBlock code={curlSnippet} />
       </section>
 
       <section className="card space-y-3">
         <h2 className="text-sm font-semibold">Node.js example</h2>
+        <p className="text-xs text-ink-900/60">
+          Full integration: list templates, create batches, single launches,
+          and lifecycle (revoke / terminate). Drop into any Node 18+ service.
+        </p>
         <CodeBlock code={nodeSnippet} />
       </section>
 
