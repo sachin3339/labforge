@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { randomBytes } from 'node:crypto';
 import { prisma } from '../db.js';
 import { authenticateTenant, requirePlatform } from '../auth/apiKey.js';
+import { provisionDefaultCatalog } from '../catalog/defaults.js';
 
 /**
  * Platform-admin routes. Only tenants with `role='platform'` may call these.
@@ -43,6 +44,10 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
     const tenant = await prisma.tenant.create({
       data: { name: body.name, apiKey, role: body.role },
     });
+    // Every new tenant ships with the standard catalog (Ubuntu, Kali,
+    // Windows, VS Code, Jupyter, terminal). They can edit / delete /
+    // add to it from the templates UI.
+    await provisionDefaultCatalog(prisma, tenant.id, 'create-only');
     reply.code(201);
     return {
       tenant: {
