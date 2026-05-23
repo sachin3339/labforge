@@ -117,9 +117,13 @@ function forwardHttp(
     headers[k] = v;
   }
   // changeOrigin: Kasm validates Host against container:port.
-  headers.host = decision.upstream;
+  headers.Host = decision.upstream;
+  delete headers.host;
+  delete headers.authorization;
   if (decision.injectAuth) {
-    headers.authorization = decision.injectAuth;
+    // NB: capital 'A' is required — KasmVNC's HTTP parser is case-sensitive
+    // and ignores `authorization` (lowercase).
+    headers.Authorization = decision.injectAuth;
   }
   const remote = req.socket.remoteAddress ?? '';
   const prevXff = req.headers['x-forwarded-for'];
@@ -176,9 +180,12 @@ function forwardUpgrade(
     if (v == null) continue;
     headers[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
   }
-  headers.host = decision.upstream;
+  headers.Host = decision.upstream;
+  delete headers.host;
+  delete headers.authorization;
   if (decision.injectAuth) {
-    headers.authorization = decision.injectAuth;
+    // Capital 'A' — KasmVNC's HTTP parser is case-sensitive.
+    headers.Authorization = decision.injectAuth;
   }
   const remote = req.socket.remoteAddress ?? '';
   headers['x-forwarded-for'] = headers['x-forwarded-for']
