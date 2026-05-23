@@ -175,6 +175,18 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const target = instanceUrl(instance.subdomain);
+    // Kasm desktops (linux-desktop / windows-desktop runtimes) display at
+    // their container resolution and letterbox the rest of the viewport with
+    // an unresponsive black/grey area. Asking KasmVNC to resize the desktop
+    // to match the iframe size eliminates the dead zone and gives the
+    // student a full, click-everywhere workspace.
+    const templateSpec = (launch.template.spec ?? {}) as { runtime?: string };
+    const isDesktop =
+      templateSpec.runtime === 'linux-desktop' ||
+      templateSpec.runtime === 'windows-desktop';
+    const finalTarget = isDesktop
+      ? `${target}/?resize=remote&view_only=0`
+      : target;
     // Cookie must be settable by the redeem endpoint's host AND readable by
     // the lab subdomain host. When redeem runs on api.<root> and labs live on
     // *.lab.<root>, the cookie must be scoped to the common parent <root>,
@@ -195,7 +207,7 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
         sameSite: 'none',
         expires: expiresAt,
       })
-      .redirect(target, 302);
+      .redirect(finalTarget, 302);
   });
 };
 
