@@ -187,6 +187,12 @@ function forwardUpgrade(
     // Capital 'A' — KasmVNC's HTTP parser is case-sensitive.
     headers.Authorization = decision.injectAuth;
   }
+  // Ensure the upgrade headers are present and properly cased. KasmVNC's
+  // websockify parser requires Connection: Upgrade and Upgrade: websocket.
+  delete headers.connection;
+  delete headers.upgrade;
+  headers.Connection = 'Upgrade';
+  headers.Upgrade = 'websocket';
   const remote = req.socket.remoteAddress ?? '';
   headers['x-forwarded-for'] = headers['x-forwarded-for']
     ? `${headers['x-forwarded-for']}, ${remote}`
