@@ -145,7 +145,26 @@ function forwardHttp(
   );
 
   const upstream = requester(opts, (upRes) => {
-    res.writeHead(upRes.statusCode ?? 502, upRes.statusMessage, upRes.headers);
+    // Allow the lab UI to be embedded by configured LMS origins. Strip
+    // upstream X-Frame-Options and any `frame-ancestors` directive in CSP,
+    // then apply our own based on LAB_FRAME_ANCESTORS.
+    const outHeaders = { ...upRes.headers } as http.OutgoingHttpHeaders;
+    delete outHeaders['x-frame-options'];
+    delete outHeaders['X-Frame-Options'];
+    const csp = outHeaders['content-security-policy'];
+    if (typeof csp === 'string') {
+      const cleaned = csp
+        .split(';')
+        .map((d) => d.trim())
+        .filter((d) => d && !/^frame-ancestors\b/i.test(d))
+        .join('; ');
+      outHeaders['content-security-policy'] = cleaned
+        ? `${cleaned}; frame-ancestors ${config.LAB_FRAME_ANCESTORS}`
+        : `frame-ancestors ${config.LAB_FRAME_ANCESTORS}`;
+    } else {
+      outHeaders['content-security-policy'] = `frame-ancestors ${config.LAB_FRAME_ANCESTORS}`;
+    }
+    res.writeHead(upRes.statusCode ?? 502, upRes.statusMessage, outHeaders);
     upRes.pipe(res);
   });
   upstream.on('error', (err: Error) => {

@@ -32,9 +32,12 @@ const app = Fastify({
 });
 
 await app.register(helmet, {
-  // The lab will be loaded in iframes from LMSs; we relax framing in the
-  // gateway, not here.
+  // Lab UIs are loaded inside LMS / admin iframes. We control framing via
+  // `LAB_FRAME_ANCESTORS` in config and strip upstream X-Frame-Options in
+  // the wildcard proxy. Helmet's defaults (X-Frame-Options: SAMEORIGIN +
+  // CSP) would block both, so we disable them here.
   contentSecurityPolicy: false,
+  frameguard: false,
 });
 await app.register(cors, { origin: true, credentials: true });
 await app.register(cookie);

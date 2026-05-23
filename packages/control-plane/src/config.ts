@@ -100,6 +100,18 @@ const Env = z.object({
     .default('true')
     .transform((v) => v === 'true'),
   PREWARM_INTERVAL_SECONDS: z.coerce.number().int().positive().default(15),
+
+  /**
+   * Space-separated list of origins permitted to embed lab UIs in iframes.
+   * Default '*' allows embedding from anywhere (suitable for dev and for
+   * LMS integrations). For a stricter prod setup, set this to e.g.
+   *   "https://lxp.example.com https://admin.environments.learnlytica.com"
+   *
+   * Setting this also strips upstream `X-Frame-Options` and any
+   * `frame-ancestors` directive in upstream Content-Security-Policy headers,
+   * so containers like Kasm / code-server stop blocking the iframe.
+   */
+  LAB_FRAME_ANCESTORS: z.string().default('*'),
 });
 
 export type AppConfig = z.infer<typeof Env>;
