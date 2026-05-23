@@ -1,7 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage } from 'node:http';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import tls from 'node:tls';
 import type { Socket } from 'node:net';
-import httpProxy from 'http-proxy';
 import { prisma } from './db.js';
 import { verifySessionToken } from './auth/jwt.js';
 import { config } from './config.js';
@@ -19,28 +22,6 @@ import { warmingUpHtml, unavailableHtml } from './ui/warmingPage.js';
  * single-binary.
  */
 export async function registerWildcardProxy(app: FastifyInstance): Promise<void> {
-  const proxy = httpProxy.createProxyServer({
-    ws: true,
-    xfwd: true,
-    proxyTimeout: 30_000,
-    timeout: 60_000,
-  });
-
-  // Strip any client-sent x-labforge-inject-auth so callers can't spoof it.
-  proxy.on('proxyReq', (proxyReq) => {
-    proxyReq.removeHeader('x-labforge-inject-auth');
-  });
-
-  proxy.on('error', (err, _req, res) => {
-    app.log.warn({ err: err.message }, '[proxy] upstream error');
-    const r = res as ServerResponse | undefined;
-    if (r && !r.headersSent) {
-      r.statusCode = 502;
-      r.setHeader('content-type', 'application/json');
-      r.end(JSON.stringify({ error: 'upstream_unavailable' }));
-    }
-  });
-
   // --- HTTP path: intercept before Fastify routing ---
   app.addHook('onRequest', async (req, reply) => {
     const host = (req.headers.host ?? '').split(':')[0]?.toLowerCase() ?? '';
@@ -69,37 +50,18 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
       return;
     }
 
-    if (decision.injectAuth) {
-      req.raw.headers['authorization'] = decision.injectAuth;
-    }
-    app.log.info(
-      `[proxy] ${req.method} ${req.url} → ${decision.scheme}://${decision.upstream} ` +
-        `injectAuth=${decision.injectAuth ? 'yes' : 'no'} ` +
-        `auth-on-req=${req.raw.headers['authorization'] ? 'yes' : 'no'}`,
-    );
     reply.hijack();
-    proxy.web(req.raw, reply.raw, {
-      target: `${decision.scheme}://${decision.upstream}`,
-      changeOrigin: true,
-      secure: false,
-    });
+    forwardHttp(req.raw, reply.raw, decision, app.log);
   });
 
   // --- WebSocket path: hook the underlying HTTP server's upgrade event ---
   app.server.on('upgrade', (req: IncomingMessage, socket: Socket, head: Buffer) => {
     void (async () => {
       const host = (req.headers.host ?? '').split(':')[0]?.toLowerCase() ?? '';
-      if (!isLabHost(host)) {
-        // Not for us — let Fastify's own ws handlers (if any) take over.
-        return;
-      }
+      if (!isLabHost(host)) return;
       const subdomain = host.slice(0, host.length - config.PUBLIC_LAB_DOMAIN.length - 1);
       const decision = await resolveAndAuth(subdomain, req.headers.cookie, app.log);
       if (decision.kind !== 'ok') {
-        // Can't render HTML on a websocket. Close the socket with a status
-        // line that mirrors the HTTP decision; the client (e.g. noVNC) will
-        // surface this as a disconnect and the auto-refreshing HTML page
-        // wrapping the iframe will handle the wait.
         const code = decision.kind === 'warming' ? 503 : decision.code;
         const reason =
           decision.kind === 'warming'
@@ -111,19 +73,129 @@ export async function registerWildcardProxy(app: FastifyInstance): Promise<void>
         socket.destroy();
         return;
       }
-      if (decision.injectAuth) {
-        req.headers['authorization'] = decision.injectAuth;
-      }
-      proxy.ws(req, socket, head, {
-        target: `${decision.scheme}://${decision.upstream}`,
-        changeOrigin: true,
-        secure: false,
-      });
+      forwardUpgrade(req, socket, head, decision, app.log);
     })().catch((err) => {
       app.log.error({ err: (err as Error).message }, '[proxy] ws hook error');
       socket.destroy();
     });
   });
+}
+
+/**
+ * Forward an HTTP request to the upstream container. We build the outgoing
+ * request manually (instead of using http-proxy) because http-proxy was
+ * silently dropping the injected Authorization header for Kasm desktops.
+ */
+function forwardHttp(
+  req: IncomingMessage,
+  res: http.ServerResponse,
+  decision: Extract<Decision, { kind: 'ok' }>,
+  log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): void {
+  const [hostname, portStr] = decision.upstream.split(':');
+  const port = Number(portStr);
+  const headers: http.OutgoingHttpHeaders = { ...req.headers };
+  // changeOrigin: the upstream (Kasm) validates Host against container:port.
+  headers.host = decision.upstream;
+  if (decision.injectAuth) {
+    headers.authorization = decision.injectAuth;
+  }
+  // X-Forwarded-For chain
+  const xff = req.headers['x-forwarded-for'];
+  const remote = req.socket.remoteAddress ?? '';
+  headers['x-forwarded-for'] = xff ? `${xff}, ${remote}` : remote;
+
+  const opts: https.RequestOptions = {
+    hostname,
+    port,
+    method: req.method,
+    path: req.url,
+    headers,
+    rejectUnauthorized: false,
+  };
+  const requester = decision.scheme === 'https' ? https.request : http.request;
+  log.info(
+    `[proxy] ${req.method} ${req.url} → ${decision.scheme}://${decision.upstream} ` +
+      `auth=${decision.injectAuth ? 'yes' : 'no'}`,
+  );
+
+  const upstream = requester(opts, (upRes) => {
+    res.writeHead(upRes.statusCode ?? 502, upRes.statusMessage, upRes.headers);
+    upRes.pipe(res);
+  });
+  upstream.on('error', (err: Error) => {
+    log.warn(`[proxy] upstream error: ${err.message}`);
+    if (!res.headersSent) {
+      res.statusCode = 502;
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ error: 'upstream_unavailable' }));
+    } else {
+      res.destroy();
+    }
+  });
+  req.pipe(upstream);
+}
+
+/**
+ * Forward a WebSocket / HTTP upgrade to the upstream. Opens a raw TLS (or
+ * TCP) socket to the container, writes the HTTP/1.1 request line + headers
+ * with Authorization injected, then bidirectionally pipes.
+ */
+function forwardUpgrade(
+  req: IncomingMessage,
+  client: Socket,
+  head: Buffer,
+  decision: Extract<Decision, { kind: 'ok' }>,
+  log: { info: (m: string) => void; warn: (m: string) => void; error: (m: string) => void },
+): void {
+  const [hostname, portStr] = decision.upstream.split(':');
+  const port = Number(portStr);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    if (v == null) continue;
+    headers[k.toLowerCase()] = Array.isArray(v) ? v.join(', ') : String(v);
+  }
+  headers.host = decision.upstream;
+  if (decision.injectAuth) {
+    headers.authorization = decision.injectAuth;
+  }
+  const remote = req.socket.remoteAddress ?? '';
+  headers['x-forwarded-for'] = headers['x-forwarded-for']
+    ? `${headers['x-forwarded-for']}, ${remote}`
+    : remote;
+
+  log.info(
+    `[proxy] WS ${req.url} → ${decision.scheme}://${decision.upstream} ` +
+      `auth=${decision.injectAuth ? 'yes' : 'no'}`,
+  );
+
+  const connect = decision.scheme === 'https'
+    ? () => tls.connect({ host: hostname, port, rejectUnauthorized: false, servername: hostname })
+    : () => net.connect({ host: hostname, port });
+  const upstream = connect();
+
+  const onError = (err: Error) => {
+    log.warn(`[proxy] ws upstream error: ${err.message}`);
+    client.destroy();
+    upstream.destroy();
+  };
+  upstream.on('error', onError);
+  client.on('error', onError);
+
+  const onReady = () => {
+    let raw = `${req.method ?? 'GET'} ${req.url} HTTP/1.1\r\n`;
+    for (const [k, v] of Object.entries(headers)) raw += `${k}: ${v}\r\n`;
+    raw += '\r\n';
+    upstream.write(raw);
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(client);
+    client.pipe(upstream);
+  };
+  if (decision.scheme === 'https') {
+    (upstream as tls.TLSSocket).once('secureConnect', onReady);
+  } else {
+    (upstream as net.Socket).once('connect', onReady);
+  }
 }
 
 function isLabHost(host: string): boolean {
