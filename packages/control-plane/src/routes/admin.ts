@@ -39,7 +39,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       }),
     ]);
     return {
-      tenant: { id: tenant.id, name: tenant.name },
+      tenant: { id: tenant.id, name: tenant.name, role: tenant.role },
       stats: {
         templates: templateCount,
         activeInstances: instanceCount,

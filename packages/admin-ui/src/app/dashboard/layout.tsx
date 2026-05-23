@@ -5,7 +5,7 @@ import { ADMIN_COOKIE_NAME, apiFetch } from '@/lib/api';
 import { SidebarNav } from '@/components/sidebar-nav';
 import { IconLogout, IconBolt } from '@/components/icons';
 
-type Me = { tenant: { id: string; name: string } };
+type Me = { tenant: { id: string; name: string; role?: string } };
 
 async function signOut() {
   'use server';
@@ -36,7 +36,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
           </div>
         </div>
 
-        <SidebarNav />
+        <SidebarNav isPlatform={me.data.tenant.role === 'platform'} />
 
         <div className="border-t border-ink-200/70 p-3">
           <div className="flex items-center gap-3 rounded-lg px-2 py-2">

@@ -16,6 +16,9 @@ model Tenant {
   apiKey    String   @unique
   /// HMAC secret for outbound webhooks to this tenant's LMS.
   webhookSecret String @default(cuid())
+  /// "platform" tenants can manage other tenants via /api/v1/platform/*.
+  /// "tenant" (default) tenants can only manage their own resources.
+  role          String   @default("tenant")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

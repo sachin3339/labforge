@@ -34,3 +34,16 @@ export async function authenticateTenant(
 
   req.tenant = tenant;
 }
+
+/**
+ * Gate platform-only routes (tenant management, billing, etc.) to tenants
+ * with `role === 'platform'`. Must run AFTER `authenticateTenant`.
+ */
+export async function requirePlatform(
+  req: FastifyRequest,
+  reply: FastifyReply,
+): Promise<void> {
+  if (!req.tenant || req.tenant.role !== 'platform') {
+    reply.code(403).send({ error: 'platform_only' });
+  }
+}

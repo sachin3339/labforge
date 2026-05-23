@@ -11,6 +11,7 @@ import { batchRoutes } from './routes/batches.js';
 import { redeemRoutes } from './routes/redeem.js';
 import { internalRoutes } from './routes/internal.js';
 import { adminRoutes } from './routes/admin.js';
+import { platformRoutes } from './routes/platform.js';
 import { gradingRoutes } from './routes/grading.js';
 import { reportRoutes } from './routes/reports.js';
 import { hostRoutes } from './routes/host.js';
@@ -57,6 +58,7 @@ await app.register(
     await scope.register(launchRoutes, { prefix: '/launches' });
     await scope.register(batchRoutes, { prefix: '/batches' });
     await scope.register(adminRoutes, { prefix: '/admin' });
+    await scope.register(platformRoutes, { prefix: '/platform' });
     await scope.register(gradingRoutes, { prefix: '/grading' });
     await scope.register(reportRoutes, { prefix: '/reports' });
     await scope.register(hostRoutes, { prefix: '/host' });

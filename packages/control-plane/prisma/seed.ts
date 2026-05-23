@@ -36,8 +36,8 @@ async function main() {
 
   const tenant = await prisma.tenant.upsert({
     where: { apiKey },
-    update: { name: tenantName },
-    create: { name: tenantName, apiKey },
+    update: { name: tenantName, role: 'platform' },
+    create: { name: tenantName, apiKey, role: 'platform' },
   });
 
   // ----- VS Code (code-server with Node.js) -----
