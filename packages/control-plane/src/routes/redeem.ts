@@ -181,13 +181,18 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
     // not to PUBLIC_LAB_DOMAIN (which would be a sibling subtree the redeem
     // host is not allowed to set cookies on).
     const cookieDomain = parentDomain(config.PUBLIC_LAB_DOMAIN);
+    // The redeem URL is loaded inside a cross-origin iframe by LMSs. For the
+    // browser to accept (and later send) `lf_session` in that third-party
+    // context, the cookie MUST be `SameSite=None; Secure`. `Lax` works only
+    // for top-level navigation, which breaks the embedded flow with a
+    // `no_session` redirect on the lab subdomain.
     reply
       .setCookie('lf_session', sessionToken, {
         domain: cookieDomain,
         path: '/',
         httpOnly: true,
-        secure: config.NODE_ENV === 'production',
-        sameSite: 'lax',
+        secure: true,
+        sameSite: 'none',
         expires: expiresAt,
       })
       .redirect(target, 302);
