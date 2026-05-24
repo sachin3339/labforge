@@ -21,14 +21,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ---------------------------------------------------------------------------
 # 1. APT packages: Python, MySQL Workbench, build prerequisites, libs Postman
 #    needs at runtime (electron app).
+#    The kasm base disables Ubuntu's `universe` repo (where mysql-workbench
+#    lives), so we re-enable it explicitly before installing.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        software-properties-common ca-certificates \
+ && add-apt-repository -y universe \
+ && apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv python3-dev \
         mysql-workbench \
         # Postman/Electron runtime deps
         libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils \
         libatspi2.0-0 libuuid1 libsecret-1-0 \
-        ca-certificates wget tar \
+        wget tar \
     && rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
