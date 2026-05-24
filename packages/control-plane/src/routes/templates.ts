@@ -8,11 +8,14 @@ const CreateBody = z.object({
   name: z.string().min(1).max(64).regex(/^[a-z0-9-]+$/, 'lowercase, digits, hyphens'),
   description: z.string().max(2048).optional(),
   spec: LabTemplateSpec,
+  /** Pin this template to a specific node. Null/undefined = unpinned. */
+  defaultNodeId: z.string().nullable().optional(),
 });
 
 const UpdateBody = z.object({
   description: z.string().max(2048).optional(),
   spec: LabTemplateSpec.optional(),
+  defaultNodeId: z.string().nullable().optional(),
 });
 
 export const templateRoutes: FastifyPluginAsync = async (app) => {
@@ -54,6 +57,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
         name: parsed.data.name,
         description: parsed.data.description,
         spec: parsed.data.spec,
+        defaultNodeId: parsed.data.defaultNodeId ?? null,
       },
     });
     return created;
@@ -79,6 +83,10 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       data: {
         description: parsed.data.description ?? existing.description,
         spec: parsed.data.spec ?? (existing.spec as object),
+        defaultNodeId:
+          parsed.data.defaultNodeId === undefined
+            ? existing.defaultNodeId
+            : parsed.data.defaultNodeId,
       },
     });
     return updated;

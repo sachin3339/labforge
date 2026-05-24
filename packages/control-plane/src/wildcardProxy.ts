@@ -10,6 +10,7 @@ import { verifySessionToken } from './auth/jwt.js';
 import { config } from './config.js';
 import { resumeInstance } from './orchestrator.js';
 import { getRuntime } from './runtime/index.js';
+import { getNodeRuntime } from './runtime/nodes.js';
 import { warmingUpHtml, unavailableHtml } from './ui/warmingPage.js';
 
 /**
@@ -263,6 +264,8 @@ type Decision =
       upstream: string;
       scheme: 'http' | 'https';
       instanceId: string;
+      runtimeId: string | null;
+      nodeId: string | null;
       /**
        * If set, the proxy will overwrite the incoming `Authorization` header
        * with this value before forwarding. Used for Kasm desktops so that the
@@ -357,7 +360,7 @@ async function resolveAndAuth(
       ? `Basic ${Buffer.from(`kasm_user:${vncPw}`).toString('base64')}`
       : undefined;
 
-  if (instance.runtimeId && !(await fastIsReady(instance.runtimeId, instance.upstream, scheme))) {
+  if (instance.runtimeId && !(await fastIsReady(instance.runtimeId, instance.upstream, scheme, instance.nodeId))) {
     return { kind: 'warming', templateName: instance.template.name };
   }
 
@@ -376,6 +379,8 @@ async function resolveAndAuth(
     upstream: instance.upstream,
     scheme,
     instanceId: instance.id,
+    runtimeId: instance.runtimeId,
+    nodeId: instance.nodeId,
     injectAuth,
   };
 }
@@ -384,9 +389,13 @@ async function fastIsReady(
   runtimeId: string,
   upstream: string,
   scheme: 'http' | 'https',
+  nodeId: string | null,
 ): Promise<boolean> {
   try {
-    return await getRuntime().isReady(runtimeId, upstream, scheme);
+    const runtime = nodeId
+      ? await getNodeRuntime(await prisma.node.findUnique({ where: { id: nodeId } }))
+      : getRuntime();
+    return await runtime.isReady(runtimeId, upstream, scheme);
   } catch {
     return false;
   }

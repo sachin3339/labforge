@@ -1,12 +1,27 @@
 import { customAlphabet } from 'nanoid';
 import { createHash } from 'node:crypto';
-import type { LabTemplate, LabInstance } from '@prisma/client';
+import type { LabTemplate, LabInstance, Node } from '@prisma/client';
 import { LabTemplateSpec, type LabTemplateSpec as LabTemplateSpecT } from '@labforge/shared';
 import { prisma } from './db.js';
 import { config } from './config.js';
 import { getRuntime } from './runtime/index.js';
-import type { VolumeMount } from './runtime/types.js';
+import { getNodeRuntime, resolveNodeForProvision } from './runtime/nodes.js';
+import type { LabRuntime, VolumeMount } from './runtime/types.js';
 import { emitUsage } from './metering.js';
+
+/**
+ * Look up the runtime that owns this instance — every lifecycle op
+ * (suspend/resume/destroy/restart/logs/exec) must hit the same Docker host
+ * the container actually lives on. Falls back to the local-socket runtime
+ * when an instance pre-dates the multi-node migration (instance.nodeId =
+ * null), which is safe because all such rows were provisioned on the host
+ * the control-plane currently runs on.
+ */
+async function runtimeFor(inst: { nodeId: string | null }): Promise<LabRuntime> {
+  if (!inst.nodeId) return getRuntime();
+  const node = await prisma.node.findUnique({ where: { id: inst.nodeId } });
+  return getNodeRuntime(node);
+}
 
 // Lowercase, DNS-safe — used as subdomain.
 const sub = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 12);
@@ -152,8 +167,14 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
   });
 
   try {
-    const runtime = getRuntime();
-    const { runtimeId, upstream } = await runtime.provision({
+    // Pick the physical host this lab will land on. Resolution honours
+    // tenant pin > template pin > Node.isDefault > sole-enabled fallback.
+    // A null result means no nodes have been configured yet; we fall back
+    // to the legacy local-socket runtime so the very-first-boot dev story
+    // still works before the operator opens the Nodes UI.
+    const node = await resolveNodeForProvision(input.tenantId, input.template.id);
+    const runtime = node ? await getNodeRuntime(node) : getRuntime();
+    const { runtimeId, upstream, hostPort } = await runtime.provision({
       instanceId: instance.id,
       subdomain,
       spec,
@@ -167,7 +188,14 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
 
     const updated = await prisma.labInstance.update({
       where: { id: instance.id },
-      data: { runtimeId, upstream, status: 'ready', lastActivityAt: new Date() },
+      data: {
+        runtimeId,
+        upstream,
+        hostPort: hostPort ?? null,
+        nodeId: node?.id ?? null,
+        status: 'ready',
+        lastActivityAt: new Date(),
+      },
     });
     if (!input.isPrewarm) {
       emitUsage({
@@ -225,7 +253,7 @@ export async function destroyInstance(
 ): Promise<void> {
   const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
   if (!inst) return;
-  const runtime = getRuntime();
+  const runtime = await runtimeFor(inst);
   if (inst.runtimeId) {
     try {
       await runtime.destroy(inst.runtimeId);
@@ -264,7 +292,8 @@ export async function suspendInstance(instanceId: string): Promise<void> {
   if (inst.status === 'paused' || inst.status === 'terminated' || inst.status === 'failed') {
     return;
   }
-  await getRuntime().suspend(inst.runtimeId);
+  const runtime = await runtimeFor(inst);
+  await runtime.suspend(inst.runtimeId);
   await prisma.labInstance.update({
     where: { id: instanceId },
     data: { status: 'paused', suspendedAt: new Date() },
@@ -290,7 +319,7 @@ export async function resumeInstance(
   if (!inst.runtimeId) {
     throw new Error(`instance ${instanceId} has no runtimeId; cannot resume`);
   }
-  const runtime = getRuntime();
+  const runtime = await runtimeFor(inst);
   await runtime.resume(inst.runtimeId);
   const updated = await prisma.labInstance.update({
     where: { id: instanceId },
@@ -313,7 +342,7 @@ export async function resumeInstance(
     });
     const spec = (tmpl?.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
     const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
-    await waitUntilReady(inst.runtimeId, updated.upstream, waitMs, scheme);
+    await waitUntilReady(inst.runtimeId, updated.upstream, waitMs, scheme, runtime);
   }
   return updated;
 }
@@ -323,8 +352,8 @@ export async function waitUntilReady(
   upstream: string,
   timeoutMs: number,
   scheme: 'http' | 'https' = 'http',
+  runtime: LabRuntime = getRuntime(),
 ): Promise<boolean> {
-  const runtime = getRuntime();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await runtime.isReady(runtimeId, upstream, scheme)) return true;
@@ -341,7 +370,8 @@ export async function waitUntilReady(
 export async function restartInstance(instanceId: string): Promise<void> {
   const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
   if (!inst || !inst.runtimeId) return;
-  await getRuntime().restart(inst.runtimeId);
+  const runtime = await runtimeFor(inst);
+  await runtime.restart(inst.runtimeId);
   await prisma.labInstance.update({
     where: { id: instanceId },
     data: {
@@ -374,7 +404,8 @@ export async function getInstanceLogs(
 ): Promise<string> {
   const inst = await prisma.labInstance.findUnique({ where: { id: instanceId } });
   if (!inst || !inst.runtimeId) return '';
-  return getRuntime().logs(inst.runtimeId, { tail });
+  const runtime = await runtimeFor(inst);
+  return runtime.logs(inst.runtimeId, { tail });
 }
 
 /** Public URL the gateway will route to this instance. */

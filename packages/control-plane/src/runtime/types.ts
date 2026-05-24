@@ -29,6 +29,9 @@ export interface ProvisionResult {
   runtimeId: string;
   /** `host:port` the gateway should proxy to. */
   upstream: string;
+  /** Host port the lab is published on. Persisted so the proxy can
+   *  reconstruct upstream across restarts; optional for non-docker runtimes. */
+  hostPort?: number;
 }
 
 export interface ExecRequest {

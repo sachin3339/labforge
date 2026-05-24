@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from '../db.js';
 import { authenticateTenant, requirePlatform } from '../auth/apiKey.js';
 import { provisionDefaultCatalog } from '../catalog/defaults.js';
+import { invalidateNodeRuntime, pingNode } from '../runtime/nodes.js';
 
 /**
  * Platform-admin routes. Only tenants with `role='platform'` may call these.
@@ -84,18 +85,27 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
     return { tenant };
   });
 
-  // ----- Update tenant name / role -----
+  // ----- Update tenant name / role / default node -----
   app.patch('/tenants/:id', async (req, reply) => {
     const { id } = z.object({ id: z.string() }).parse(req.params);
     const body = z
       .object({
         name: z.string().min(1).max(100).optional(),
         role: z.enum(['tenant', 'platform']).optional(),
+        /** null clears the pin; undefined leaves it alone. */
+        defaultNodeId: z.string().nullable().optional(),
       })
       .parse(req.body);
     try {
       const tenant = await prisma.tenant.update({ where: { id }, data: body });
-      return { tenant: { id: tenant.id, name: tenant.name, role: tenant.role } };
+      return {
+        tenant: {
+          id: tenant.id,
+          name: tenant.name,
+          role: tenant.role,
+          defaultNodeId: tenant.defaultNodeId,
+        },
+      };
     } catch {
       reply.code(404);
       return { error: 'not_found' };
@@ -135,7 +145,110 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'not_found' };
     }
   });
+
+  // ============================================================
+  //   Node management — physical Docker hosts the scheduler can
+  //   land lab containers on.
+  // ============================================================
+
+  // ----- List nodes -----
+  app.get('/nodes', async () => {
+    const nodes = await prisma.node.findMany({
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      include: {
+        _count: { select: { instances: true } },
+      },
+    });
+    return { nodes };
+  });
+
+  // ----- Create node -----
+  app.post('/nodes', async (req, reply) => {
+    const body = NodeWriteBody.parse(req.body);
+    // If the new node is marked default, clear any existing default first —
+    // we never want two rows fighting over the implicit fallback.
+    if (body.isDefault) {
+      await prisma.node.updateMany({ where: { isDefault: true }, data: { isDefault: false } });
+    }
+    const node = await prisma.node.create({ data: body });
+    reply.code(201);
+    return { node };
+  });
+
+  // ----- Update node -----
+  app.patch('/nodes/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(req.params);
+    const body = NodeWriteBody.partial().parse(req.body);
+    try {
+      if (body.isDefault === true) {
+        await prisma.node.updateMany({
+          where: { isDefault: true, NOT: { id } },
+          data: { isDefault: false },
+        });
+      }
+      const node = await prisma.node.update({ where: { id }, data: body });
+      // Connection settings may have changed — force a fresh dockerode
+      // client next time anyone hits this node.
+      invalidateNodeRuntime(id);
+      return { node };
+    } catch {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+  });
+
+  // ----- Test connection -----
+  app.post('/nodes/:id/ping', async (req, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(req.params);
+    const node = await prisma.node.findUnique({ where: { id } });
+    if (!node) {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+    invalidateNodeRuntime(id);
+    return pingNode(node);
+  });
+
+  // ----- Delete node -----
+  app.delete('/nodes/:id', async (req, reply) => {
+    const { id } = z.object({ id: z.string() }).parse(req.params);
+    const count = await prisma.labInstance.count({
+      where: { nodeId: id, status: { notIn: ['terminated', 'failed'] } },
+    });
+    if (count > 0) {
+      reply.code(409);
+      return { error: 'node_in_use', activeInstances: count };
+    }
+    try {
+      await prisma.node.delete({ where: { id } });
+      invalidateNodeRuntime(id);
+      reply.code(204);
+      return null;
+    } catch {
+      reply.code(404);
+      return { error: 'not_found' };
+    }
+  });
 };
+
+/**
+ * Shared validator for node create/update. Operators only fill the SSH
+ * fields when `connectionMode='ssh'`; the local mode ignores them.
+ */
+const NodeWriteBody = z.object({
+  name: z.string().min(1).max(64),
+  isDefault: z.boolean().default(false),
+  connectionMode: z.enum(['local', 'ssh']).default('local'),
+  sshHost: z.string().nullable().optional(),
+  sshUser: z.string().nullable().optional(),
+  sshPort: z.number().int().min(1).max(65535).nullable().optional(),
+  sshKeyPath: z.string().nullable().optional(),
+  proxyHost: z.string().min(1).default('127.0.0.1'),
+  bindIp: z.string().min(1).default('127.0.0.1'),
+  capacityMax: z.number().int().min(0).default(0),
+  enabled: z.boolean().default(true),
+  notes: z.string().nullable().optional(),
+});
 
 /** Hex-encoded 32-byte random key. */
 function generateApiKey(): string {

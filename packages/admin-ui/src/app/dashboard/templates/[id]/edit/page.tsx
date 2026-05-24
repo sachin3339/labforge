@@ -27,7 +27,10 @@ type Template = {
   name: string;
   description: string | null;
   spec: TemplateSpec;
+  defaultNodeId: string | null;
 };
+
+type NodeOpt = { id: string; name: string; isDefault: boolean; enabled: boolean };
 
 async function update(templateId: string, formData: FormData) {
   'use server';
@@ -50,6 +53,10 @@ async function update(templateId: string, formData: FormData) {
   const priceListRaw = String(formData.get('priceListUsd') ?? '').trim();
   const costPerHourUsd = costPerHourRaw ? Number(costPerHourRaw) : undefined;
   const priceListUsd = priceListRaw ? Number(priceListRaw) : undefined;
+  const defaultNodeRaw = String(formData.get('defaultNodeId') ?? '').trim();
+  // Empty-string select option means "unpin"; we send explicit null so the
+  // server-side patch handler clears the FK instead of leaving it alone.
+  const defaultNodeId: string | null = defaultNodeRaw === '' ? null : defaultNodeRaw;
 
   const env: Record<string, string> = {};
   for (const line of envRaw.split(/\r?\n/)) {
@@ -75,6 +82,7 @@ async function update(templateId: string, formData: FormData) {
     method: 'PATCH',
     body: JSON.stringify({
       description,
+      defaultNodeId,
       spec: {
         image,
         runtime,
@@ -113,11 +121,17 @@ export default async function EditTemplatePage({
 }) {
   const { id } = await params;
   const { error } = await searchParams;
-  const res = await apiFetch<Template>(`/api/v1/templates/${id}`);
+  const [res, nodesRes] = await Promise.all([
+    apiFetch<Template>(`/api/v1/templates/${id}`),
+    apiFetch<{ nodes: NodeOpt[] }>('/api/v1/platform/nodes'),
+  ]);
   if (!res.ok) {
     if (res.status === 404) notFound();
     return <div className="text-red-600">Error: {res.error}</div>;
   }
+  // nodesRes may 403 for non-platform tenants — fall back to empty list
+  // and just hide the node picker in that case.
+  const nodes: NodeOpt[] = nodesRes.ok ? nodesRes.data.nodes : [];
   const t = res.data;
   const s = t.spec;
   const envString = s.env
@@ -159,6 +173,28 @@ export default async function EditTemplatePage({
             placeholder="Python 3 dev environment with VS Code"
           />
         </Field>
+        {nodes.length > 0 && (
+          <Field label="Pin to node (optional)">
+            <select
+              name="defaultNodeId"
+              className="input"
+              defaultValue={t.defaultNodeId ?? ''}
+            >
+              <option value="">— follow tenant / default —</option>
+              {nodes.map((n) => (
+                <option key={n.id} value={n.id} disabled={!n.enabled}>
+                  {n.name}
+                  {n.isDefault ? ' (default)' : ''}
+                  {!n.enabled ? ' — drained' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-ink-900/60">
+              Every lab launched from this template will run on the pinned
+              node. Leave blank to use the tenant pin or the cluster default.
+            </p>
+          </Field>
+        )}
         <Field label="Container image">
           <input
             name="image"

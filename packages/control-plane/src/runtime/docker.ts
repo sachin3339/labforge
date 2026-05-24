@@ -20,24 +20,53 @@ const httpsInsecureDispatcher = new UndiciAgent({
 });
 
 /**
- * Docker runtime adapter. Used for local dev and single-node deployments.
- * Production multi-node will swap in a k8s adapter that implements the same
- * interface.
+ * Per-node Docker runtime adapter. One instance per `Node` row — see
+ * runtime/nodes.ts for the factory/cache.
+ *
+ * In multi-node deployments the control-plane host does NOT share the
+ * remote node's labnet, so we cannot reach containers via internal docker
+ * DNS. Instead we always publish the lab port to an ephemeral host port
+ * on the node and store `{node.proxyHost}:{hostPort}` as the upstream.
+ * The wildcard proxy then opens a TCP/TLS socket directly to that
+ * host:port. `LAB_PUBLISH_PORTS` is therefore implicitly true for
+ * non-local nodes; we keep the env flag for single-host dev convenience.
  *
  * Security notes:
  *   - Containers run on a dedicated user-defined bridge network (`labnet`),
  *     isolated from the host network.
- *   - We do NOT publish ports to the host; the gateway reaches the container
- *     by its DNS name on `labnet` (`<subdomain>.labnet`).
+ *   - Published ports bind to `node.bindIp` only (default 127.0.0.1 for
+ *     local, but operators set this to a private/Tailscale IP on remote
+ *     boxes so the lab isn't exposed on 0.0.0.0).
  *   - CPU/memory hard-capped via cgroup limits.
  *   - Read-only root FS where the image allows; `/tmp` mounted tmpfs.
  */
+export interface DockerRuntimeOpts {
+  /** Live dockerode client (local socket OR ssh-tunnelled). */
+  docker: Docker;
+  /** Address the control-plane proxy uses to reach this node. */
+  proxyHost: string;
+  /** Interface on the node that published ports bind to. */
+  bindIp: string;
+}
+
 export class DockerRuntime implements LabRuntime {
   readonly name = 'docker' as const;
   private readonly docker: Docker;
+  private readonly proxyHost: string;
+  private readonly bindIp: string;
 
-  constructor() {
-    this.docker = new Docker({ socketPath: config.DOCKER_HOST_SOCKET });
+  constructor(opts?: DockerRuntimeOpts) {
+    if (opts) {
+      this.docker = opts.docker;
+      this.proxyHost = opts.proxyHost;
+      this.bindIp = opts.bindIp;
+    } else {
+      // Backwards-compatible no-arg ctor used by the legacy getRuntime()
+      // singleton path (mock-runtime tests etc). Targets the local socket.
+      this.docker = new Docker({ socketPath: config.DOCKER_HOST_SOCKET });
+      this.proxyHost = '127.0.0.1';
+      this.bindIp = '127.0.0.1';
+    }
   }
 
   async provision(req: ProvisionRequest): Promise<ProvisionResult> {
@@ -106,13 +135,13 @@ export class DockerRuntime implements LabRuntime {
         SecurityOpt: ['no-new-privileges:true'],
         RestartPolicy: { Name: 'no' },
         AutoRemove: false,
-        // Dev mode: publish lab port to a random host port so a control
-        // plane running OUTSIDE the labnet (e.g. natively on Windows while
-        // Podman runs in WSL) can still reach it. Disabled by default —
-        // production keeps labs unreachable from the host.
-        ...(config.LAB_PUBLISH_PORTS
-          ? { PortBindings: { [`${spec.port}/tcp`]: [{ HostPort: '0' }] } }
-          : {}),
+        // Always publish the lab port. The wildcard proxy reaches us via
+        // `<node.proxyHost>:<assigned-host-port>` — there is no shared
+        // labnet across nodes. We bind to `node.bindIp` so operators can
+        // restrict exposure to a private interface.
+        PortBindings: {
+          [`${spec.port}/tcp`]: [{ HostIp: this.bindIp, HostPort: '0' }],
+        },
       },
       NetworkingConfig: {
         EndpointsConfig: {
@@ -125,22 +154,21 @@ export class DockerRuntime implements LabRuntime {
 
     await container.start();
 
-    let upstream: string;
-    if (config.LAB_PUBLISH_PORTS) {
-      // Inspect to find the host-assigned port
-      const info = await container.inspect();
-      const binding = info.NetworkSettings?.Ports?.[`${spec.port}/tcp`]?.[0];
-      const hostPort = binding?.HostPort;
-      if (!hostPort) {
-        throw new Error(
-          `lab container ${name} started but no host port binding was created`,
-        );
-      }
-      upstream = `127.0.0.1:${hostPort}`;
-    } else {
-      upstream = `${subdomain}:${spec.port}`;
+    // Inspect to find the host-assigned port. We always publish (see above),
+    // so no info here means the engine misbehaved.
+    const info = await container.inspect();
+    const binding = info.NetworkSettings?.Ports?.[`${spec.port}/tcp`]?.[0];
+    const hostPort = binding?.HostPort;
+    if (!hostPort) {
+      throw new Error(
+        `lab container ${name} started but no host port binding was created`,
+      );
     }
-    return { runtimeId: container.id, upstream };
+    return {
+      runtimeId: container.id,
+      upstream: `${this.proxyHost}:${hostPort}`,
+      hostPort: Number(hostPort),
+    };
   }
 
   async isReady(

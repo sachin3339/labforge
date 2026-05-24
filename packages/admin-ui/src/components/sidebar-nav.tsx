@@ -23,6 +23,7 @@ const items = [
 
 const platformItems = [
   { href: '/dashboard/platform/tenants', label: 'Tenants', Icon: IconBolt },
+  { href: '/dashboard/platform/nodes', label: 'Nodes', Icon: IconServer },
 ];
 
 export function SidebarNav({ isPlatform = false }: { isPlatform?: boolean }) {

@@ -4,6 +4,7 @@ import type { GraderCheckResult } from '@labforge/shared';
 import type { LabInstance, LabTemplate, Launch, Tenant } from '@prisma/client';
 import { prisma } from './db.js';
 import { getRuntime } from './runtime/index.js';
+import { getNodeRuntime } from './runtime/nodes.js';
 
 export interface GradeInput {
   tenant: Tenant;
@@ -45,7 +46,11 @@ export async function gradeInstance(input: GradeInput): Promise<GradeOutcome> {
     );
   }
 
-  const runtime = getRuntime();
+  const runtime = input.instance.nodeId
+    ? await getNodeRuntime(
+        await prisma.node.findUnique({ where: { id: input.instance.nodeId } }),
+      )
+    : getRuntime();
   const checks: GraderCheckResult[] = [];
   let score = 0;
   let maxScore = 0;

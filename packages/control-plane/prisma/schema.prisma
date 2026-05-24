@@ -19,6 +19,11 @@ model Tenant {
   /// "platform" tenants can manage other tenants via /api/v1/platform/*.
   /// "tenant" (default) tenants can only manage their own resources.
   role          String   @default("tenant")
+  /// Optional: pin every lab launched by this tenant to a specific node.
+  /// Overrides template default; further overridden by an explicit
+  /// admin-set instance.nodeId. Null = no tenant-level pin.
+  defaultNodeId String?
+  defaultNode   Node?    @relation("TenantDefaultNode", fields: [defaultNodeId], references: [id], onDelete: SetNull)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -37,6 +42,11 @@ model LabTemplate {
   description String?
   /// Validated against LabTemplateSpec (zod) at write time.
   spec        Json
+  /// Optional: pin labs of this template to a specific node. Resolution
+  /// order at provision time: instance.nodeId (explicit) > tenant.defaultNodeId
+  /// > template.defaultNodeId > Node.isDefault. Null = follow tenant/default.
+  defaultNodeId String?
+  defaultNode   Node?  @relation("TemplateDefaultNode", fields: [defaultNodeId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -91,13 +101,22 @@ model LabInstance {
   templateId  String
   template    LabTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
+  /// Physical host running this container. Null only on legacy rows from
+  /// before the multi-node migration; new rows always have it set.
+  nodeId      String?
+  node        Node?    @relation(fields: [nodeId], references: [id], onDelete: SetNull)
+
   status      InstanceStatus @default(pending)
   /// True while this instance is sitting in the warm pool unassigned.
   isPrewarm   Boolean  @default(false)
 
   /// Runtime-specific handle (docker container id, k8s pod name, ...).
   runtimeId   String?
-  /// Host:port the gateway routes to (e.g. "10.0.0.5:32145").
+  /// Host port the gateway forwards to on `node.proxyHost`. Stored so the
+  /// proxy can reconstruct the upstream after a control-plane restart.
+  hostPort    Int?
+  /// Host:port the gateway routes to (e.g. "10.0.0.5:32145"). Composed
+  /// from `node.proxyHost` + `hostPort` at provision time.
   upstream    String?
   /// Public subdomain segment used for {sub}.lab.example.com.
   subdomain   String   @unique
@@ -176,4 +195,45 @@ model UsageEvent {
   @@index([tenantId, occurredAt])
   @@index([tenantId, kind, occurredAt])
   @@index([instanceId])
+}
+
+/// A physical host capable of running lab containers. Multi-node deploys
+/// have one row per Docker host; single-node deploys keep a single row
+/// named "local" pointing at the control-plane's own /var/run/docker.sock.
+model Node {
+  id              String   @id @default(cuid())
+  /// Human-readable label shown in the admin UI (e.g. "local", "box-2").
+  name            String   @unique
+  /// One node is flagged default; provisions land here if nothing else pins.
+  isDefault       Boolean  @default(false)
+  /// 'local' uses /var/run/docker.sock on the control-plane host;
+  /// 'ssh' tunnels dockerode through SSH to a remote box's docker.sock.
+  connectionMode  String   @default("local")
+  /// SSH host (required when connectionMode = 'ssh').
+  sshHost         String?
+  sshUser         String?  @default("ubuntu")
+  sshPort         Int?     @default(22)
+  /// Absolute path on the control-plane host to the SSH private key used
+  /// to authenticate to this node (PEM, no passphrase).
+  sshKeyPath      String?
+  /// Where the wildcard proxy reaches this node's published container
+  /// ports (IP or hostname). Typically a private/Tailscale address so we
+  /// don't expose containers on the public internet.
+  proxyHost       String   @default("127.0.0.1")
+  /// Which interface published container ports bind to on this node.
+  /// Mirrors the host-side address of `proxyHost`; usually the same.
+  bindIp          String   @default("0.0.0.0")
+  /// Soft cap surfaced in the admin UI (instances). 0 = unlimited.
+  capacityMax     Int      @default(0)
+  /// Drained nodes accept no new provisions but keep existing instances.
+  enabled         Boolean  @default(true)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  instances           LabInstance[]
+  templateDefaults    LabTemplate[] @relation("TemplateDefaultNode")
+  tenantDefaults      Tenant[]      @relation("TenantDefaultNode")
+
+  @@index([enabled, isDefault])
 }
