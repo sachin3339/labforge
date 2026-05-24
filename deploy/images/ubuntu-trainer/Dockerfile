@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && add-apt-repository -y universe \
  && apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv python3-dev \
-        mysql-workbench \
+        mysql-workbench-community \
         # Postman/Electron runtime deps
         libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils \
         libatspi2.0-0 libuuid1 libsecret-1-0 \
