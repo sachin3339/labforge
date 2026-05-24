@@ -96,7 +96,17 @@ RUN printf '%s\n' \
     > /usr/share/applications/jupyterlab.desktop
 
 # ---------------------------------------------------------------------------
-# 5. Hand control back to the unprivileged kasm user that the base image
+# 5. Clean up any root-owned droppings inside the kasm-user home. The base
+#    image sets HOME=/home/kasm-user, so root-run `wget` (Postman, Workbench)
+#    leaves a root-owned `.wget-hsts` there which then blocks kasm's
+#    profile-copy step at first launch. Ensure the whole home is owned by
+#    kasm-user before we drop privileges.
+# ---------------------------------------------------------------------------
+RUN rm -f /home/kasm-user/.wget-hsts /root/.wget-hsts \
+ && chown -R 1000:0 /home/kasm-user
+
+# ---------------------------------------------------------------------------
+# 6. Hand control back to the unprivileged kasm user that the base image
 #    launches the desktop as.
 # ---------------------------------------------------------------------------
 USER 1000
