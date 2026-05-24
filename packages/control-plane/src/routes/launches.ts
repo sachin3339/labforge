@@ -27,7 +27,13 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
       include: {
         template: { select: { id: true, name: true } },
         instance: {
-          select: { id: true, subdomain: true, status: true, expiresAt: true },
+          select: {
+            id: true,
+            subdomain: true,
+            status: true,
+            expiresAt: true,
+            node: { select: { id: true, name: true } },
+          },
         },
       },
     });
@@ -298,6 +304,16 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
     const { id } = req.params as { id: string };
     const launch = await prisma.launch.findFirst({
       where: { id, tenantId: tenant.id },
+      include: {
+        template: { select: { name: true } },
+        // Pull node off the bound instance (may be null if the launch
+        // hasn't been redeemed yet — caller renders "—" in that case).
+        instance: {
+          select: {
+            node: { select: { id: true, name: true } },
+          },
+        },
+      },
     });
     if (!launch) {
       reply.code(404);
@@ -318,6 +334,11 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
       { ttlSeconds: 300 }, // 5 minutes — admin preview only
     );
     const url = `${config.PUBLIC_API_URL}/launch/redeem?t=${encodeURIComponent(token)}`;
-    return { url, expiresAt: expiresAt.toISOString() };
+    return {
+      url,
+      expiresAt: expiresAt.toISOString(),
+      templateName: launch.template?.name ?? null,
+      node: launch.instance?.node ?? null,
+    };
   });
 };

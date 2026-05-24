@@ -17,6 +17,9 @@ type NodeRow = {
   capacityMax: number;
   notes: string | null;
   createdAt: string;
+  lastSeenAt: string | null;
+  lastError: string | null;
+  dockerVersion: string | null;
   _count: { instances: number };
 };
 
@@ -223,6 +226,7 @@ export default async function NodesPage() {
             <details key={n.id} className="card">
               <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-3 text-sm">
                 <div className="flex flex-wrap items-center gap-2">
+                  <HealthDot node={n} />
                   <span className="font-mono text-base font-semibold">
                     {n.name}
                   </span>
@@ -244,6 +248,7 @@ export default async function NodesPage() {
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-3 text-xs text-ink-900/70">
+                  <HealthSummary node={n} />
                   <span>
                     <strong>{n._count.instances}</strong> instances
                   </span>
@@ -456,4 +461,53 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </label>
   );
+}
+
+/**
+ * Health = green when lastSeenAt is within the staleness window (≈2 min,
+ * matches NODE_HEALTH_STALE_SECONDS default on the server), red on a
+ * recorded lastError, grey when never polled yet. We don't have direct
+ * access to the server-side constant so we approximate at 3 minutes —
+ * a poll cadence of 30s means anything older than 3 ticks is definitely
+ * stale.
+ */
+const STALE_MS = 3 * 60_000;
+
+function nodeHealth(n: NodeRow): 'ok' | 'down' | 'unknown' {
+  if (!n.enabled) return 'unknown';
+  if (n.lastSeenAt && Date.now() - new Date(n.lastSeenAt).getTime() < STALE_MS) return 'ok';
+  if (n.lastError || n.lastSeenAt) return 'down';
+  return 'unknown';
+}
+
+function HealthDot({ node }: { node: NodeRow }) {
+  const h = nodeHealth(node);
+  const tone =
+    h === 'ok' ? 'bg-emerald-500' : h === 'down' ? 'bg-red-500' : 'bg-ink-300';
+  const title =
+    h === 'ok'
+      ? `Healthy — last ping ${node.lastSeenAt ? new Date(node.lastSeenAt).toLocaleString() : ''}`
+      : h === 'down'
+        ? `Unreachable: ${node.lastError ?? 'no recent ping'}`
+        : 'No health data yet (waiting for first poll)';
+  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${tone}`} title={title} />;
+}
+
+function HealthSummary({ node }: { node: NodeRow }) {
+  const h = nodeHealth(node);
+  if (h === 'ok') {
+    return (
+      <span className="text-emerald-700">
+        up · {node.dockerVersion ?? 'docker'}
+      </span>
+    );
+  }
+  if (h === 'down') {
+    return (
+      <span className="text-red-700" title={node.lastError ?? undefined}>
+        unreachable
+      </span>
+    );
+  }
+  return <span className="text-ink-900/50">awaiting first poll</span>;
 }

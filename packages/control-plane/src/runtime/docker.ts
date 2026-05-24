@@ -298,6 +298,46 @@ export class DockerRuntime implements LabRuntime {
     }
   }
 
+  /**
+   * Re-inspect a container and report its currently published host port.
+   * Docker reassigns ephemeral ports on every `docker start`, so the value
+   * we stored at provision-time goes stale across host reboots and even
+   * across resume() on a daemon that doesn't preserve port maps. The
+   * orchestrator calls this after resume/restart and PERSISTS any drift
+   * so the wildcard proxy keeps routing to the right port.
+   *
+   * Picks the first port mapping with a non-empty `HostPort` — labs only
+   * ever publish a single port, so there's nothing ambiguous to choose.
+   */
+  async inspectInstance(
+    runtimeId: string,
+  ): Promise<{ running: boolean; hostPort?: number; upstream?: string } | null> {
+    try {
+      const info = await this.docker.getContainer(runtimeId).inspect();
+      const running = !!info.State?.Running;
+      const portsMap = (info.NetworkSettings?.Ports ?? {}) as Record<
+        string,
+        Array<{ HostIp?: string; HostPort?: string }> | null
+      >;
+      let hostPort: number | undefined;
+      for (const bindings of Object.values(portsMap)) {
+        if (!bindings || bindings.length === 0) continue;
+        const p = Number(bindings[0]?.HostPort);
+        if (Number.isFinite(p) && p > 0) {
+          hostPort = p;
+          break;
+        }
+      }
+      return hostPort
+        ? { running, hostPort, upstream: `${this.proxyHost}:${hostPort}` }
+        : { running };
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      if (e.statusCode === 404) return null;
+      throw err;
+    }
+  }
+
   async exec(runtimeId: string, req: ExecRequest): Promise<ExecResult> {
     const c = this.docker.getContainer(runtimeId);
     const maxBytes = req.maxOutputBytes ?? 64 * 1024;

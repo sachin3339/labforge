@@ -78,4 +78,15 @@ export interface LabRuntime {
   logs(runtimeId: string, opts?: { tail?: number }): Promise<string>;
   /** Restart the container/pod in place (stop + start). */
   restart(runtimeId: string): Promise<void>;
+  /**
+   * Re-inspect a running container/pod and return its currently published
+   * host port + upstream string. Used after resume/restart to detect when
+   * Docker reassigns the ephemeral port. Returns null if the runtime no
+   * longer knows about this id (e.g. container removed).
+   */
+  inspectInstance(runtimeId: string): Promise<{
+    running: boolean;
+    hostPort?: number;
+    upstream?: string;
+  } | null>;
 }

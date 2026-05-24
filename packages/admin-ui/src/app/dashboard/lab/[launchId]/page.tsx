@@ -16,10 +16,11 @@ export default async function LabViewerPage({
 }) {
   const { launchId } = await params;
 
-  const res = await apiFetch<{ url: string }>(
-    `/api/v1/launches/${launchId}/preview-url`,
-    { method: 'POST' },
-  );
+  const res = await apiFetch<{
+    url: string;
+    templateName?: string | null;
+    node?: { id: string; name: string } | null;
+  }>(`/api/v1/launches/${launchId}/preview-url`, { method: 'POST' });
 
   if (!res.ok) {
     return (
@@ -36,7 +37,14 @@ export default async function LabViewerPage({
     );
   }
 
-  return <LabFrame src={res.data.url} launchId={launchId} />;
+  return (
+    <LabFrame
+      src={res.data.url}
+      launchId={launchId}
+      nodeName={res.data.node?.name ?? null}
+      templateName={res.data.templateName ?? null}
+    />
+  );
 }
 
 // Render full-bleed without the dashboard chrome — the lab needs the

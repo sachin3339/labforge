@@ -23,6 +23,37 @@ async function runtimeFor(inst: { nodeId: string | null }): Promise<LabRuntime> 
   return getNodeRuntime(node);
 }
 
+/**
+ * After resume()/restart() the Docker daemon may have reassigned the
+ * ephemeral host port (ports are NOT preserved across `docker start` on
+ * some daemons / host reboots). Re-inspect, and if the binding drifted
+ * from what we stored at provision-time, persist the new value so the
+ * wildcard proxy keeps routing correctly. Best-effort: failures are
+ * logged-then-swallowed (the next health probe / redeem will resync).
+ */
+async function syncInstanceUpstream(
+  inst: { id: string; runtimeId: string | null; hostPort: number | null; upstream: string | null },
+  runtime: LabRuntime,
+): Promise<{ hostPort: number | null; upstream: string | null }> {
+  if (!inst.runtimeId) return { hostPort: inst.hostPort, upstream: inst.upstream };
+  try {
+    const info = await runtime.inspectInstance(inst.runtimeId);
+    if (!info || !info.hostPort || !info.upstream) {
+      return { hostPort: inst.hostPort, upstream: inst.upstream };
+    }
+    if (info.hostPort === inst.hostPort && info.upstream === inst.upstream) {
+      return { hostPort: inst.hostPort, upstream: inst.upstream };
+    }
+    await prisma.labInstance.update({
+      where: { id: inst.id },
+      data: { hostPort: info.hostPort, upstream: info.upstream },
+    });
+    return { hostPort: info.hostPort, upstream: info.upstream };
+  } catch {
+    return { hostPort: inst.hostPort, upstream: inst.upstream };
+  }
+}
+
 // Lowercase, DNS-safe — used as subdomain.
 const sub = customAlphabet('0123456789abcdefghijklmnopqrstuvwxyz', 12);
 
@@ -321,9 +352,20 @@ export async function resumeInstance(
   }
   const runtime = await runtimeFor(inst);
   await runtime.resume(inst.runtimeId);
+  // Detect & persist port drift BEFORE the readiness probe so isReady() is
+  // pointed at the right host:port. Without this, a daemon that reassigned
+  // the ephemeral port would make every probe fail and the redeem would
+  // hand the student a stale URL.
+  const synced = await syncInstanceUpstream(inst, runtime);
   const updated = await prisma.labInstance.update({
     where: { id: instanceId },
-    data: { status: 'ready', suspendedAt: null, lastActivityAt: new Date() },
+    data: {
+      status: 'ready',
+      suspendedAt: null,
+      lastActivityAt: new Date(),
+      hostPort: synced.hostPort,
+      upstream: synced.upstream,
+    },
   });
   emitUsage({
     tenantId: updated.tenantId,
@@ -372,12 +414,17 @@ export async function restartInstance(instanceId: string): Promise<void> {
   if (!inst || !inst.runtimeId) return;
   const runtime = await runtimeFor(inst);
   await runtime.restart(inst.runtimeId);
+  // Same rationale as resumeInstance(): docker restart can reassign the
+  // host port; persist any drift before clients try to use the URL.
+  const synced = await syncInstanceUpstream(inst, runtime);
   await prisma.labInstance.update({
     where: { id: instanceId },
     data: {
       status: 'ready',
       suspendedAt: null,
       lastActivityAt: new Date(),
+      hostPort: synced.hostPort,
+      upstream: synced.upstream,
     },
   });
 }

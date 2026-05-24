@@ -228,6 +228,15 @@ model Node {
   /// Drained nodes accept no new provisions but keep existing instances.
   enabled         Boolean  @default(true)
   notes           String?
+  /// Last successful ping (docker.version()) by the health poller.
+  /// null = never reachable since boot. Scheduler treats nodes with a
+  /// recent lastSeenAt (or null, to allow bootstrap) as eligible.
+  lastSeenAt      DateTime?
+  /// Last error message observed by the health poller. Cleared on a
+  /// successful ping. Surfaced in the admin UI for quick triage.
+  lastError       String?
+  /// Docker engine version string from the last successful ping.
+  dockerVersion   String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

@@ -15,7 +15,17 @@ import Link from 'next/link';
  * Fullscreen requires a user gesture (no auto-trigger on load) so we
  * surface a prominent button + an Esc hint.
  */
-export function LabFrame({ src, launchId }: { src: string; launchId: string }) {
+export function LabFrame({
+  src,
+  launchId,
+  nodeName,
+  templateName,
+}: {
+  src: string;
+  launchId: string;
+  nodeName?: string | null;
+  templateName?: string | null;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isFs, setIsFs] = useState(false);
@@ -61,6 +71,19 @@ export function LabFrame({ src, launchId }: { src: string; launchId: string }) {
             ← Back
           </Link>
           <span className="font-mono text-ink-50/50">launch {launchId.slice(0, 8)}…</span>
+          {templateName && (
+            <span className="hidden sm:inline rounded-md bg-ink-800 px-2 py-0.5 text-ink-50/70">
+              {templateName}
+            </span>
+          )}
+          {nodeName && (
+            <span
+              className="rounded-md bg-sky-600/30 px-2 py-0.5 text-sky-100 ring-1 ring-sky-400/40"
+              title="Physical host running this container"
+            >
+              node: {nodeName}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <a

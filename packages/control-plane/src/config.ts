@@ -112,6 +112,31 @@ const Env = z.object({
    * so containers like Kasm / code-server stop blocking the iframe.
    */
   LAB_FRAME_ANCESTORS: z.string().default('*'),
+
+  /**
+   * Multi-node placement policy when no tenant/template pin applies.
+   *   - 'spread'  : pick the enabled+healthy node with the fewest active
+   *                 instances (default — what you want for "spin up 50 of
+   *                 templateX" workloads).
+   *   - 'pinned'  : skip load-spread; fall straight through to the Node
+   *                 row flagged isDefault=true (preserves old single-box
+   *                 behaviour for operators who want strict pinning).
+   */
+  LAB_SCHEDULER: z.enum(['spread', 'pinned']).default('spread'),
+
+  /**
+   * How often the health poller pings every enabled node and refreshes
+   * Node.lastSeenAt / lastError / dockerVersion. Drives both the UI
+   * status dot AND the scheduler's "is this node healthy?" filter.
+   */
+  NODE_HEALTH_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
+  /**
+   * A node whose lastSeenAt is older than this is considered offline by
+   * the scheduler (excluded from spread placement). Keep generous — 3x
+   * the poll interval so one missed tick doesn't pull a node out of
+   * rotation.
+   */
+  NODE_HEALTH_STALE_SECONDS: z.coerce.number().int().positive().default(120),
 });
 
 export type AppConfig = z.infer<typeof Env>;

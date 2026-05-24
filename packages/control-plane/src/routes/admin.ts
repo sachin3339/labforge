@@ -73,6 +73,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       take,
       include: {
         template: { select: { id: true, name: true } },
+        node: { select: { id: true, name: true } },
         launch: {
           select: {
             id: true,
@@ -95,6 +96,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       include: {
         template: true,
         launch: true,
+        node: { select: { id: true, name: true, proxyHost: true, connectionMode: true } },
       },
     });
     if (!instance) {

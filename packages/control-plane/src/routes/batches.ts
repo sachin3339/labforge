@@ -107,7 +107,13 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
       include: {
         template: { select: { id: true, name: true } },
         instance: {
-          select: { id: true, subdomain: true, status: true, lastSeenAt: true },
+          select: {
+            id: true,
+            subdomain: true,
+            status: true,
+            lastSeenAt: true,
+            node: { select: { id: true, name: true } },
+          },
         },
       },
     });

@@ -49,5 +49,8 @@ function makeMockRuntime(): LabRuntime {
     async restart() {
       /* noop */
     },
+    async inspectInstance() {
+      return { running: true };
+    },
   };
 }

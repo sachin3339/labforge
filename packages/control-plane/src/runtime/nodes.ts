@@ -124,8 +124,9 @@ async function buildDockerClient(node: Node | null): Promise<Docker> {
  * Resolve the node a fresh instance should land on. Resolution order:
  *   1. tenant.defaultNodeId (if the tenant has been pinned)
  *   2. template.defaultNodeId (if the template has been pinned)
- *   3. the Node row flagged isDefault=true
- *   4. the only enabled node (when exactly one exists — single-box happy path)
+ *   3. config.LAB_SCHEDULER='spread' → least-loaded healthy enabled node
+ *   4. the Node row flagged isDefault=true
+ *   5. the only enabled node (when exactly one exists — single-box happy path)
  *
  * Returns null when no nodes exist at all (very-first-boot before the seed
  * has run) — orchestrator falls back to the implicit local docker socket
@@ -156,6 +157,15 @@ export async function resolveNodeForProvision(
     if (pinned) return pinned;
   }
 
+  // Load-spread: when nothing is pinned, hand the new instance to whichever
+  // healthy enabled node currently has the fewest active rows. This is what
+  // lets a tenant say "spin up 50 of templateX" and have them automatically
+  // split across the fleet without per-template pinning.
+  if (config.LAB_SCHEDULER === 'spread') {
+    const spread = await pickLeastLoadedNode();
+    if (spread) return spread;
+  }
+
   const def = await prisma.node.findFirst({
     where: { enabled: true, isDefault: true },
   });
@@ -172,4 +182,61 @@ export async function resolveNodeForProvision(
   // No nodes configured at all. Orchestrator handles this by using the local
   // docker socket directly (legacy single-host fallback).
   return null;
+}
+
+/**
+ * Pick the enabled+healthy node with the fewest active instances. "Healthy"
+ * means a successful ping within the last `NODE_HEALTH_STALE_SECONDS`, OR
+ * lastSeenAt=null (allow brand-new nodes to receive work before the first
+ * poll completes — otherwise a fresh fleet would have nowhere to land).
+ *
+ * Active = anything not in {terminated, failed}. We count `isPrewarm` rows
+ * too: warm pool consumes real resources and should count against capacity.
+ *
+ * Ties broken by name for deterministic placement (helps debugging).
+ */
+async function pickLeastLoadedNode(): Promise<Node | null> {
+  const staleSeconds = config.NODE_HEALTH_STALE_SECONDS;
+  const cutoff = new Date(Date.now() - staleSeconds * 1000);
+  const candidates = await prisma.node.findMany({
+    where: {
+      enabled: true,
+      OR: [{ lastSeenAt: null }, { lastSeenAt: { gte: cutoff } }],
+    },
+    orderBy: { name: 'asc' },
+  });
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!;
+
+  // One COUNT query, grouped by node — cheaper than N individual counts.
+  const counts = await prisma.labInstance.groupBy({
+    by: ['nodeId'],
+    where: {
+      nodeId: { in: candidates.map((n) => n.id) },
+      status: { notIn: ['terminated', 'failed'] },
+    },
+    _count: { _all: true },
+  });
+  const loadMap = new Map<string, number>();
+  for (const row of counts) {
+    if (row.nodeId) loadMap.set(row.nodeId, row._count._all);
+  }
+
+  let best = candidates[0]!;
+  let bestLoad = loadMap.get(best.id) ?? 0;
+  for (const n of candidates.slice(1)) {
+    const load = loadMap.get(n.id) ?? 0;
+    // Honour capacityMax: a saturated node is skipped even if it's the
+    // numerically lightest. 0 means "no cap".
+    if (n.capacityMax > 0 && load >= n.capacityMax) continue;
+    if (load < bestLoad) {
+      best = n;
+      bestLoad = load;
+    }
+  }
+  // If even `best` is over capacityMax, fall through (return null) so the
+  // caller drops to isDefault → legacy path. Better than throwing here and
+  // breaking provisioning entirely.
+  if (best.capacityMax > 0 && bestLoad >= best.capacityMax) return null;
+  return best;
 }

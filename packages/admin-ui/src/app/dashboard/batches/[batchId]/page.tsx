@@ -31,6 +31,7 @@ type BatchDetail = {
       subdomain: string;
       status: string;
       lastSeenAt: string | null;
+      node: { id: string; name: string } | null;
     } | null;
   }[];
 };
@@ -236,6 +237,7 @@ export default async function BatchDetailPage({
               <th className="px-3 py-2">Seat</th>
               <th className="px-3 py-2">Redeemed</th>
               <th className="px-3 py-2">Lab</th>
+              <th className="px-3 py-2">Node</th>
               <th className="px-3 py-2">Last seen</th>
               <th className="px-3 py-2 text-right">Actions</th>
             </tr>
@@ -263,6 +265,18 @@ export default async function BatchDetailPage({
                       >
                         {s.instance.subdomain}
                       </Link>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-xs">
+                    {s.instance?.node ? (
+                      <span
+                        className="badge bg-sky-100 text-sky-800"
+                        title="Physical host running this container"
+                      >
+                        {s.instance.node.name}
+                      </span>
+                    ) : (
+                      <span className="text-ink-900/40">—</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-xs text-ink-900/60">

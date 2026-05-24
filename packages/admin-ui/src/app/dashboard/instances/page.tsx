@@ -24,6 +24,7 @@ type Instance = {
   lastActivityAt: string | null;
   suspendedAt: string | null;
   template: { id: string; name: string };
+  node: { id: string; name: string } | null;
   launch: { id: string; userDisplayName: string | null } | null;
 };
 
@@ -174,6 +175,7 @@ export default async function InstancesPage({
               <tr>
                 <th className="px-3 py-3">Subdomain</th>
                 <th className="px-3 py-3">Template</th>
+                <th className="px-3 py-3">Node</th>
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3">User</th>
                 <th className="px-3 py-3">Created</th>
@@ -201,6 +203,19 @@ export default async function InstancesPage({
                       </Link>
                     </td>
                     <td className="px-3 py-3">{i.template.name}</td>
+                    <td className="px-3 py-3 text-xs">
+                      {i.node ? (
+                        <Link
+                          href={`/dashboard/platform/nodes`}
+                          className="badge bg-sky-100 text-sky-800 hover:bg-sky-200"
+                          title="Physical host running this container"
+                        >
+                          {i.node.name}
+                        </Link>
+                      ) : (
+                        <span className="text-ink-900/40">—</span>
+                      )}
+                    </td>
                     <td className="px-3 py-3">
                       <span className={`badge ${STATUS_TONE[i.status] ?? 'bg-ink-100'}`}>
                         {i.status}
