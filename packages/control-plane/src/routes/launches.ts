@@ -7,7 +7,7 @@ import { authenticateTenant } from '../auth/apiKey.js';
 import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { emitUsage } from '../metering.js';
-import { acquireInstance, resumeInstance, waitUntilReady } from '../orchestrator.js';
+import { acquireInstance, resumeInstance, runtimeFor, waitUntilReady } from '../orchestrator.js';
 
 export const launchRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
@@ -269,11 +269,15 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
     if (waitSeconds > 0 && instance!.runtimeId && instance!.upstream && !ready) {
       const spec = (launch.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
       const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
+      // Use the per-node runtime so inspect() hits the right docker daemon
+      // (instance may live on a remote worker node).
+      const runtime = await runtimeFor(instance!);
       ready = await waitUntilReady(
         instance!.runtimeId,
         instance!.upstream,
         waitSeconds * 1000,
         scheme,
+        runtime,
       );
       if (ready) {
         instance = await prisma.labInstance.findUniqueOrThrow({

@@ -17,7 +17,7 @@ import { emitUsage } from './metering.js';
  * null), which is safe because all such rows were provisioned on the host
  * the control-plane currently runs on.
  */
-async function runtimeFor(inst: { nodeId: string | null }): Promise<LabRuntime> {
+export async function runtimeFor(inst: { nodeId: string | null }): Promise<LabRuntime> {
   if (!inst.nodeId) return getRuntime();
   const node = await prisma.node.findUnique({ where: { id: inst.nodeId } });
   return getNodeRuntime(node);

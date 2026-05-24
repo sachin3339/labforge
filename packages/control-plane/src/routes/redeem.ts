@@ -6,6 +6,7 @@ import {
   acquireInstance,
   instanceUrl,
   resumeInstance,
+  runtimeFor,
   waitUntilReady,
 } from '../orchestrator.js';
 import { config } from '../config.js';
@@ -150,11 +151,16 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
       // redirect lands on a working URL.
       const spec = (launch.template.spec ?? {}) as { upstreamScheme?: 'http' | 'https' };
       const scheme: 'http' | 'https' = spec.upstreamScheme === 'https' ? 'https' : 'http';
+      // Container may be on a remote node — resolve the right runtime so
+      // the readiness `inspect()` hits the correct docker daemon (otherwise
+      // it 404s against the local socket and isReady silently returns false).
+      const runtime = await runtimeFor(instance);
       const ok = await waitUntilReady(
         instance.runtimeId,
         instance.upstream,
         config.RESUME_WAIT_TIMEOUT_SECONDS * 1000,
         scheme,
+        runtime,
       );
       if (!ok) {
         // Still warming up. Render an HTML page that auto-refreshes so the
