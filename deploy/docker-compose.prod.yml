@@ -104,6 +104,10 @@ services:
     volumes:
       # Host docker socket — control plane spins up sibling lab containers.
       - /var/run/docker.sock:/var/run/docker.sock
+      # SSH key used to reach remote worker nodes (Platform → Nodes).
+      # Generate once on the primary with:
+      #   ssh-keygen -t ed25519 -f deploy/secrets/nodes_id_ed25519 -N ""
+      - ./secrets/nodes_id_ed25519:/root/.ssh/nodes_id_ed25519:ro
     networks:
       - default
       - labnet
