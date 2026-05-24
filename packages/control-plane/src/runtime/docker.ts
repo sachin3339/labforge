@@ -89,6 +89,11 @@ export class DockerRuntime implements LabRuntime {
     // Pull image if missing. Best-effort; ignore failure (image may already exist).
     await this.ensureImage(spec.image);
 
+    // Ensure the shared lab bridge network exists on this node. Compose
+    // creates it on the primary, but remote worker nodes are bare Docker
+    // hosts — first provision on each node has to create it.
+    await this.ensureNetwork(config.DOCKER_NETWORK);
+
     // Ensure each named volume exists. Volumes survive container removal
     // so the student's data persists across suspend/resume/reprovision.
     const binds: string[] = [];
@@ -383,6 +388,27 @@ export class DockerRuntime implements LabRuntime {
       });
     } catch (err: unknown) {
       // 409 means another concurrent provision just created it — fine.
+      const e = err as { statusCode?: number };
+      if (e.statusCode !== 409) throw err;
+    }
+  }
+
+  private async ensureNetwork(name: string): Promise<void> {
+    try {
+      await this.docker.getNetwork(name).inspect();
+      return;
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      if (e.statusCode !== 404) throw err;
+    }
+    try {
+      await this.docker.createNetwork({
+        Name: name,
+        Driver: 'bridge',
+        Labels: { 'labforge.managed': 'true' },
+      });
+    } catch (err: unknown) {
+      // 409 = a concurrent provision created it first.
       const e = err as { statusCode?: number };
       if (e.statusCode !== 409) throw err;
     }
