@@ -142,7 +142,11 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
         WIDTH: '1600',
         HEIGHT: '900',
         KVM: 'Y',
-        GPU: 'Y',
+        // GPU passthrough requires a DRM render node on the host
+        // (/dev/dri/renderD128). Bare metal hosts without an actual GPU
+        // don't have one; enabling this makes QEMU crash with
+        // "egl: no drm render node available". Software rendering is
+        // fine for a browser-based RDP/VNC desktop.
       },
       workspaceDir: 'C:\\Users\\Docker',
       persistPaths: ['/storage'],
