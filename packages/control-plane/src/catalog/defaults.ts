@@ -89,6 +89,36 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
     },
   },
 
+  // ----- Ubuntu trainer desktop (KasmVNC + Python/Jupyter/MySQL Workbench/Postman) -----
+  // Image is built locally on the host from deploy/images/ubuntu-trainer/Dockerfile.
+  {
+    name: 'ubuntu-trainer',
+    description:
+      'Ubuntu desktop pre-loaded with Python, JupyterLab, MySQL Workbench, and Postman. Recommended for technical-training cohorts.',
+    spec: {
+      image: 'labforge/ubuntu-trainer:1.0',
+      runtime: 'linux-desktop',
+      port: 6901,
+      upstreamScheme: 'https',
+      cpu: 1.5,
+      memoryMb: 3584,
+      env: {
+        VNC_PW: 'labforge',
+        KASM_SVC_PRINTER: '0',
+        KASM_SVC_UPLOADS: '0',
+        KASM_SVC_GAMEPAD: '0',
+        KASM_SVC_AUDIO_INPUT: '0',
+      },
+      workspaceDir: '/home/kasm-user',
+      persistPaths: ['/home/kasm-user'],
+      prewarm: 0,
+      shmSizeMb: 512,
+      tmpfs: { '/tmp': 'size=512m' },
+      costPerHourUsd: 0.05,
+      priceListUsd: 3.0,
+    },
+  },
+
   // ----- Kali desktop (KasmVNC) -----
   {
     name: 'kali-desktop',
