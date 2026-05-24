@@ -61,40 +61,14 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
     },
   },
 
-  // ----- Ubuntu desktop (KasmVNC) -----
+  // ----- Ubuntu desktop (KasmVNC + Python/Jupyter/MySQL Workbench/Postman) -----
+  // Image is built locally on the host from deploy/images/ubuntu-trainer/Dockerfile.
+  // Sized for technical-training cohorts (validated up to 32 concurrent users
+  // on a 12 vCPU / 125 GiB box).
   {
     name: 'ubuntu-desktop',
-    description: 'Full Ubuntu XFCE desktop in the browser (KasmVNC).',
-    spec: {
-      image: 'kasmweb/ubuntu-jammy-desktop:1.16.0',
-      runtime: 'linux-desktop',
-      port: 6901,
-      upstreamScheme: 'https',
-      cpu: 2,
-      memoryMb: 2048,
-      env: {
-        VNC_PW: 'labforge',
-        KASM_SVC_PRINTER: '0',
-        KASM_SVC_UPLOADS: '0',
-        KASM_SVC_GAMEPAD: '0',
-        KASM_SVC_AUDIO_INPUT: '0',
-      },
-      workspaceDir: '/home/kasm-user',
-      persistPaths: ['/home/kasm-user'],
-      prewarm: 0,
-      shmSizeMb: 512,
-      tmpfs: { '/tmp': 'size=512m' },
-      costPerHourUsd: 0.04,
-      priceListUsd: 2.5,
-    },
-  },
-
-  // ----- Ubuntu trainer desktop (KasmVNC + Python/Jupyter/MySQL Workbench/Postman) -----
-  // Image is built locally on the host from deploy/images/ubuntu-trainer/Dockerfile.
-  {
-    name: 'ubuntu-trainer',
     description:
-      'Ubuntu desktop pre-loaded with Python, JupyterLab, MySQL Workbench, and Postman. Recommended for technical-training cohorts.',
+      'Ubuntu XFCE desktop with Python 3, JupyterLab, MySQL Workbench, and Postman pre-installed.',
     spec: {
       image: 'labforge/ubuntu-trainer:1.0',
       runtime: 'linux-desktop',

@@ -11,22 +11,12 @@ export async function openLaunchAction(formData: FormData) {
   const launchId = String(formData.get('launchId') ?? '');
   const batchId = String(formData.get('batchId') ?? '');
   if (!launchId) return;
-  const res = await apiFetch<{ url: string }>(
-    `/api/v1/launches/${launchId}/preview-url`,
-    { method: 'POST' },
-  );
-  if (!res.ok) {
-    if (batchId) {
-      await setFlash({
-        kind: 'batch-error',
-        data: { message: `Open failed: ${res.error}` },
-      });
-      revalidatePath(`/dashboard/batches/${batchId}`);
-      redirect(`/dashboard/batches/${batchId}`);
-    }
-    return;
+  // Hand off to the fullscreen-capable wrapper. The wrapper itself mints a
+  // fresh preview URL on each render, so we don't pre-burn one here.
+  if (batchId) {
+    redirect(`/dashboard/lab/${launchId}?from=batch&batchId=${batchId}`);
   }
-  redirect(res.data.url);
+  redirect(`/dashboard/lab/${launchId}`);
 }
 
 export async function prepareLaunchAction(formData: FormData) {

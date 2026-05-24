@@ -13,14 +13,8 @@ import { apiFetch } from '@/lib/api';
 export async function openLaunchAction(formData: FormData) {
   const launchId = String(formData.get('launchId') ?? '');
   if (!launchId) return;
-  const res = await apiFetch<{ url: string }>(
-    `/api/v1/launches/${launchId}/preview-url`,
-    { method: 'POST' },
-  );
-  if (!res.ok) {
-    redirect(`/dashboard/instances?openErr=${encodeURIComponent(res.error)}`);
-  }
-  redirect(res.data.url);
+  // Hand off to the fullscreen-capable wrapper (it mints its own preview URL).
+  redirect(`/dashboard/lab/${launchId}`);
 }
 
 export async function suspendAction(formData: FormData) {
