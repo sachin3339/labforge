@@ -32,6 +32,13 @@ services:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    # Lab containers on the `local` node bind their published ports to the
+    # host loopback (127.0.0.1:hostPort). From inside the caddy container
+    # `127.0.0.1` means caddy itself, so we expose the host's loopback via
+    # `host.docker.internal`. The `host-gateway` magic resolves to the
+    # Docker bridge gateway on the host, which can reach 127.0.0.1 bindings.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     depends_on:
       - admin-ui
       - control-plane
