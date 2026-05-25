@@ -184,6 +184,13 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
     }
   }
 
+  // Resolve the target node FIRST and persist nodeId on the row before
+  // the slow runtime.provision() call. This makes the in-flight row visible
+  // to the load-spread scheduler immediately — without it, concurrent
+  // provisions (e.g. /batches/:id/prepare with concurrency=5) all see the
+  // same "0 load" snapshot and pile onto the same node.
+  const node = await resolveNodeForProvision(input.tenantId, input.template.id);
+
   const instance = await prisma.labInstance.create({
     data: {
       tenantId: input.tenantId,
@@ -194,16 +201,16 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
       userIdHash: input.userIdHash,
       expiresAt: input.expiresAt,
       volumeName,
+      nodeId: node?.id ?? null,
     },
   });
 
   try {
-    // Pick the physical host this lab will land on. Resolution honours
-    // tenant pin > template pin > Node.isDefault > sole-enabled fallback.
-    // A null result means no nodes have been configured yet; we fall back
-    // to the legacy local-socket runtime so the very-first-boot dev story
-    // still works before the operator opens the Nodes UI.
-    const node = await resolveNodeForProvision(input.tenantId, input.template.id);
+    // Node was already resolved above and persisted on the instance row so
+    // concurrent pickLeastLoadedNode() calls see this in-flight provision.
+    // A null node means no nodes are configured yet; fall back to the
+    // legacy local-socket runtime so the very-first-boot dev story still
+    // works before the operator opens the Nodes UI.
     const runtime = node ? await getNodeRuntime(node) : getRuntime();
     const { runtimeId, upstream, hostPort } = await runtime.provision({
       instanceId: instance.id,
