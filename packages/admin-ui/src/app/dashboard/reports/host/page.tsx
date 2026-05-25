@@ -100,8 +100,9 @@ export default async function HostHealthPage() {
               sample (Refresh every ~10s when watching).
             </p>
           </div>
-        <div className="text-[10px] text-ink-900/40">
-          sampled at {new Date(h.generatedAt).toLocaleTimeString()}
+          <div className="text-[10px] text-ink-500">
+            sampled at {new Date(h.generatedAt).toLocaleTimeString()}
+          </div>
         </div>
       </header>
       <ReportTabs active="/dashboard/reports/host" />
