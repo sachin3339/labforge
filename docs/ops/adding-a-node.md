@@ -23,7 +23,7 @@ Pre-pull the lab images you intend to run (otherwise the first provision
 on this node will block while the image downloads):
 
 ```bash
-sudo docker pull labforge/ubuntu-trainer:1.0
+sudo docker pull labforge/ubuntu-trainer:1.1
 sudo docker pull kasmweb/kali-rolling-desktop:1.16.0
 # ...
 ```

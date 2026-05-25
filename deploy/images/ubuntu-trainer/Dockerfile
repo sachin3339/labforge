@@ -6,7 +6,7 @@
 #
 # Build (on the prod host so the daemon has the result locally):
 #   cd deploy/images/ubuntu-trainer
-#   sudo docker build -t labforge/ubuntu-trainer:1.0 .
+#   sudo docker build -t labforge/ubuntu-trainer:1.1 .
 #
 # The image is referenced by the `ubuntu-trainer` template in
 # packages/control-plane/src/catalog/defaults.ts.
@@ -22,6 +22,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 # 1. APT packages: Python, build prerequisites, libs Postman/Workbench need
 #    at runtime. MySQL Workbench is no longer in Ubuntu's repos; we install
 #    Oracle's official .deb in a dedicated layer below.
+#    MySQL Server is installed here so Workbench has a local database to
+#    connect to out of the box — students don't need to wire up a remote DB.
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv python3-dev \
@@ -31,6 +33,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # Workbench-specific runtime libs (kasm base lacks these)
         libpcre2-8-0 libsqlite3-0 libzip4 libgl1 libglu1-mesa \
         libxslt1.1 libproj22 libvulkan1 \
+        # MySQL server (local DB for Workbench to point at; data lives in
+        # /var/lib/mysql which is on the per-instance writable layer, so
+        # student work persists for the life of the lab).
+        mysql-server \
         ca-certificates wget tar \
     && rm -rf /var/lib/apt/lists/*
 
@@ -94,6 +100,21 @@ RUN printf '%s\n' \
     'Type=Application' \
     'Categories=Development;Science;' \
     > /usr/share/applications/jupyterlab.desktop
+
+# ---------------------------------------------------------------------------
+# 4b. MySQL Server bootstrap.
+#     Kasm uses /dockerstartup/custom_startup.sh as a hook that runs as root
+#     before the desktop session starts. We use it to:
+#       - initialise /var/lib/mysql on first launch (apt's deb-postinst does
+#         this at image build time, but the data dir is wiped if a fresh
+#         volume is mounted at /var/lib/mysql per-instance)
+#       - start mysqld in the background on every launch
+#       - ensure the `root@localhost` account has a known password and a
+#         `trainer` user is available for Workbench connections.
+# ---------------------------------------------------------------------------
+RUN install -d /dockerstartup
+COPY mysql-startup.sh /dockerstartup/custom_startup.sh
+RUN chmod +x /dockerstartup/custom_startup.sh
 
 # ---------------------------------------------------------------------------
 # 5. Clean up any root-owned droppings inside the kasm-user home. The base

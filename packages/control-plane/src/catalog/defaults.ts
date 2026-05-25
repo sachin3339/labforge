@@ -68,9 +68,9 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
   {
     name: 'ubuntu-desktop',
     description:
-      'Ubuntu XFCE desktop with Python 3, JupyterLab, MySQL Workbench, and Postman pre-installed.',
+      'Ubuntu XFCE desktop with Python 3, JupyterLab, MySQL Server + Workbench, and Postman pre-installed.',
     spec: {
-      image: 'labforge/ubuntu-trainer:1.0',
+      image: 'labforge/ubuntu-trainer:1.1',
       runtime: 'linux-desktop',
       port: 6901,
       upstreamScheme: 'https',
