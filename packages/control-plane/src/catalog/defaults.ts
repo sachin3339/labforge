@@ -88,6 +88,9 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
       prewarm: 0,
       shmSizeMb: 512,
       tmpfs: { '/tmp': 'size=512m' },
+      // Trainees need sudo (apt-get, service control, mysql admin etc.)
+      // during the session. Drops CapDrop:ALL and no-new-privileges.
+      allowRoot: true,
       costPerHourUsd: 0.05,
       priceListUsd: 3.0,
     },

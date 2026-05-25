@@ -261,6 +261,86 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
     return { revoked: result.count };
   });
 
+  // ----- Rename a batch (update batchLabel on every seat's context JSON) -----
+  app.patch('/:batchId', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { batchId } = req.params as { batchId: string };
+    const body = z
+      .object({ label: z.string().trim().min(1).max(200) })
+      .safeParse(req.body);
+    if (!body.success) {
+      reply.code(400);
+      return { error: 'invalid_body', issues: body.error.issues };
+    }
+    const launches = await prisma.launch.findMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+      select: { id: true, context: true },
+    });
+    if (launches.length === 0) {
+      reply.code(404);
+      return { error: 'batch_not_found' };
+    }
+    // Prisma can't merge a JSON column in-place without a raw query, so we
+    // rewrite each context object individually. Volume is small (one batch).
+    await prisma.$transaction(
+      launches.map((l) => {
+        const ctx = (l.context ?? {}) as Record<string, unknown>;
+        return prisma.launch.update({
+          where: { id: l.id },
+          data: { context: { ...ctx, batchLabel: body.data.label } },
+        });
+      }),
+    );
+    return { ok: true, batchId, label: body.data.label, updated: launches.length };
+  });
+
+  // ----- Purge a batch (terminate live instances + delete all launch rows) -----
+  // Destructive: removes the batch from the UI entirely. Use /terminate if you
+  // want to keep the seat history around for auditing.
+  app.delete('/:batchId/purge', async (req, reply) => {
+    const tenant = req.tenant!;
+    const { batchId } = req.params as { batchId: string };
+    const launches = await prisma.launch.findMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+      include: { instance: { select: { id: true, status: true } } },
+    });
+    if (launches.length === 0) {
+      reply.code(404);
+      return { error: 'batch_not_found' };
+    }
+
+    let terminated = 0;
+    for (const l of launches) {
+      if (
+        l.instance &&
+        !['terminated', 'failed'].includes(l.instance.status)
+      ) {
+        try {
+          await destroyInstance(l.instance.id);
+          terminated += 1;
+        } catch (err) {
+          app.log.warn(
+            { err: (err as Error).message, instanceId: l.instance.id },
+            '[batches] purge: destroyInstance failed',
+          );
+        }
+      }
+    }
+    const deleted = await prisma.launch.deleteMany({
+      where: {
+        tenantId: tenant.id,
+        context: { path: ['batchId'], equals: batchId },
+      },
+    });
+    return { ok: true, terminated, deleted: deleted.count };
+  });
+
   // ----- Terminate entire batch (kill all live instances + revoke URLs) -----
   app.post('/:batchId/terminate', async (req, reply) => {
     const tenant = req.tenant!;

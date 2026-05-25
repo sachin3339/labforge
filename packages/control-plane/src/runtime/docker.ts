@@ -127,17 +127,17 @@ export class DockerRuntime implements LabRuntime {
         Memory: spec.memoryMb * 1024 * 1024,
         NanoCpus: Math.round(spec.cpu * 1e9),
         Binds: binds.length ? binds : undefined,
-        // For VM-kind labs we keep CapDrop:ALL and selectively add back via
-        // capAdd in the template (e.g. NET_ADMIN). Privileged overrides this
-        // entirely when explicitly requested.
-        CapDrop: ['ALL'],
+        // Templates can opt into a relaxed security profile (sudo works,
+        // root can chown/chmod, etc.) by setting spec.allowRoot=true. Default
+        // posture stays locked down (CapDrop:ALL + no-new-privileges).
+        CapDrop: spec.allowRoot === true ? undefined : ['ALL'],
         CapAdd: spec.capAdd?.length ? spec.capAdd : undefined,
         Sysctls: spec.sysctls && Object.keys(spec.sysctls).length ? spec.sysctls : undefined,
         Tmpfs: spec.tmpfs && Object.keys(spec.tmpfs).length ? spec.tmpfs : undefined,
         ShmSize: spec.shmSizeMb ? spec.shmSizeMb * 1024 * 1024 : undefined,
         Devices: devices.length ? devices : undefined,
         Privileged: spec.privileged === true,
-        SecurityOpt: ['no-new-privileges:true'],
+        SecurityOpt: spec.allowRoot === true ? undefined : ['no-new-privileges:true'],
         RestartPolicy: { Name: 'no' },
         AutoRemove: false,
         // Always publish the lab port. The wildcard proxy reaches us via

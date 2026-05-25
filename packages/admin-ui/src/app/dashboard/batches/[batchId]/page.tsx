@@ -82,19 +82,22 @@ export default async function BatchDetailPage({
 
   return (
     <div className="space-y-6">
-      <header>
-        <div className="flex items-center justify-between">
+      <header className="page-header">
+        <div className="flex items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold">{b.label}</h1>
-            <p className="text-sm text-ink-900/60">
+            <Link
+              href="/dashboard/batches"
+              className="text-xs font-medium text-brand-700 hover:underline"
+            >
+              ← All batches
+            </Link>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">{b.label}</h1>
+            <p className="mt-1 max-w-3xl text-sm text-ink-600">
               Template <strong>{b.templateName}</strong> · {b.seats.length}{' '}
               seats · {redeemed} redeemed · {liveCount} live · expires{' '}
               {new Date(b.expiresAt).toLocaleString()}
             </p>
           </div>
-          <Link href="/dashboard/batches" className="btn-secondary text-sm">
-            ← All batches
-          </Link>
         </div>
       </header>
 

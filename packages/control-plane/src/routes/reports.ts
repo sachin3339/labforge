@@ -781,6 +781,202 @@ export const reportRoutes: FastifyPluginAsync = async (app) => {
 
     return { from: from.toISOString(), to: to.toISOString(), rows, totals };
   });
+
+  /**
+   * GET /api/v1/reports/by-node
+   * Per-node live distribution. Shows every Node row plus how many
+   * instances are currently live there, broken down by status, with
+   * aggregated CPU/RAM commitments. Useful to verify the scheduler
+   * is balancing the load across hosts.
+   */
+  app.get('/by-node', async (req) => {
+    const tenant = req.tenant!;
+
+    const [nodes, live] = await Promise.all([
+      prisma.node.findMany({
+        select: {
+          id: true,
+          name: true,
+          enabled: true,
+          isDefault: true,
+          capacity: true,
+          labels: true,
+          proxyHost: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      prisma.labInstance.findMany({
+        where: {
+          tenantId: tenant.id,
+          isPrewarm: false,
+          status: { in: LIVE_STATUSES },
+        },
+        select: { templateId: true, status: true, nodeId: true },
+      }),
+    ]);
+
+    const templates = await prisma.labTemplate.findMany({
+      where: { tenantId: tenant.id },
+      select: { id: true, spec: true },
+    });
+    const tmplMap = new Map(templates.map((t) => [t.id, t.spec as unknown as LabTemplateSpecT]));
+
+    const byNode = new Map<
+      string,
+      {
+        active: number;
+        paused: number;
+        starting: number;
+        cpu: number;
+        memMb: number;
+      }
+    >();
+    let unassigned = 0;
+    for (const inst of live) {
+      const key = inst.nodeId ?? '__unassigned__';
+      if (!inst.nodeId) unassigned += 1;
+      const slot =
+        byNode.get(key) ??
+        { active: 0, paused: 0, starting: 0, cpu: 0, memMb: 0 };
+      if (ACTIVE_STATUSES.includes(inst.status)) slot.active += 1;
+      if (inst.status === InstanceStatus.paused) slot.paused += 1;
+      if (
+        inst.status === InstanceStatus.pending ||
+        inst.status === InstanceStatus.provisioning
+      ) {
+        slot.starting += 1;
+      }
+      const spec = tmplMap.get(inst.templateId);
+      if (spec && ACTIVE_STATUSES.includes(inst.status)) {
+        slot.cpu += spec.cpu;
+        slot.memMb += spec.memoryMb;
+      }
+      byNode.set(key, slot);
+    }
+
+    const rows = nodes.map((n) => {
+      const s = byNode.get(n.id) ?? { active: 0, paused: 0, starting: 0, cpu: 0, memMb: 0 };
+      return {
+        nodeId: n.id,
+        name: n.name,
+        enabled: n.enabled,
+        isDefault: n.isDefault,
+        proxyHost: n.proxyHost,
+        capacity: n.capacity,
+        labels: n.labels,
+        live: s.active + s.paused + s.starting,
+        active: s.active,
+        paused: s.paused,
+        starting: s.starting,
+        runningCpu: Math.round(s.cpu * 100) / 100,
+        runningMemMb: s.memMb,
+      };
+    });
+
+    return {
+      tenantId: tenant.id,
+      generatedAt: new Date().toISOString(),
+      totalLive: live.length,
+      unassigned,
+      rows,
+    };
+  });
+
+  /**
+   * GET /api/v1/reports/activity?activeWithinMinutes=5&idleAfterMinutes=30
+   * Per-instance idle/active view. Reads `lastActivityAt` (updated by the
+   * wildcard proxy on every student request) and buckets live labs as:
+   *   - active        : seen within `activeWithinMinutes`
+   *   - recently-idle : older than active threshold but newer than idle
+   *   - idle-long     : older than `idleAfterMinutes`
+   *   - never-used    : lastActivityAt IS NULL (never received traffic)
+   *
+   * Includes node + template + user-hash so admins can spot stalled labs
+   * holding compute, and the totals object summarises counts by bucket.
+   */
+  app.get('/activity', async (req, reply) => {
+    const tenant = req.tenant!;
+    const q = parseQuery(req.url);
+    const activeWithin = Math.max(1, parseInt(q.activeWithinMinutes ?? '5', 10));
+    const idleAfter = Math.max(activeWithin, parseInt(q.idleAfterMinutes ?? '30', 10));
+    if (Number.isNaN(activeWithin) || Number.isNaN(idleAfter)) {
+      reply.code(400);
+      return { error: 'invalid_thresholds' };
+    }
+
+    const [instances, nodes, templates] = await Promise.all([
+      prisma.labInstance.findMany({
+        where: {
+          tenantId: tenant.id,
+          isPrewarm: false,
+          status: { in: LIVE_STATUSES },
+        },
+        select: {
+          id: true,
+          subdomain: true,
+          status: true,
+          nodeId: true,
+          templateId: true,
+          userIdHash: true,
+          createdAt: true,
+          lastSeenAt: true,
+          lastActivityAt: true,
+        },
+        orderBy: { lastActivityAt: { sort: 'asc', nulls: 'first' } },
+      }),
+      prisma.node.findMany({ select: { id: true, name: true } }),
+      prisma.labTemplate.findMany({
+        where: { tenantId: tenant.id },
+        select: { id: true, name: true },
+      }),
+    ]);
+
+    const nodeMap = new Map(nodes.map((n) => [n.id, n.name]));
+    const tmplMap = new Map(templates.map((t) => [t.id, t.name]));
+    const now = Date.now();
+
+    const rows = instances.map((i) => {
+      const last = i.lastActivityAt?.getTime() ?? null;
+      const idleMin = last == null ? null : Math.round((now - last) / 60_000);
+      let bucket: 'active' | 'recently-idle' | 'idle-long' | 'never-used';
+      if (last == null) bucket = 'never-used';
+      else if (idleMin! < activeWithin) bucket = 'active';
+      else if (idleMin! < idleAfter) bucket = 'recently-idle';
+      else bucket = 'idle-long';
+      return {
+        instanceId: i.id,
+        subdomain: i.subdomain,
+        status: i.status,
+        node: i.nodeId ? nodeMap.get(i.nodeId) ?? null : null,
+        template: tmplMap.get(i.templateId) ?? null,
+        userIdHash: i.userIdHash,
+        createdAt: i.createdAt.toISOString(),
+        lastSeenAt: i.lastSeenAt?.toISOString() ?? null,
+        lastActivityAt: i.lastActivityAt?.toISOString() ?? null,
+        idleMinutes: idleMin,
+        bucket,
+      };
+    });
+
+    const totals = rows.reduce(
+      (s, r) => {
+        s[r.bucket] += 1;
+        return s;
+      },
+      { active: 0, 'recently-idle': 0, 'idle-long': 0, 'never-used': 0 } as Record<
+        'active' | 'recently-idle' | 'idle-long' | 'never-used',
+        number
+      >,
+    );
+
+    return {
+      tenantId: tenant.id,
+      generatedAt: new Date().toISOString(),
+      thresholds: { activeWithinMinutes: activeWithin, idleAfterMinutes: idleAfter },
+      totals,
+      rows,
+    };
+  });
 };
 
 function csvEscape(s: string): string {

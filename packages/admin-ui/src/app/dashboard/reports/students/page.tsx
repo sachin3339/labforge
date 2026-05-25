@@ -33,9 +33,10 @@ export default async function StudentsPage({
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Reports — students</h1>
-        <p className="text-sm text-ink-900/60">
+      <header className="page-header">
+        <div className="eyebrow">Analytics · Reports</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Students</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-600">
           One row per unique student (identified by hashed user id). Optionally
           filter to a single batch.
         </p>

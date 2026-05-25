@@ -6,6 +6,7 @@
   color-scheme: light;
   --bg-page: #f8fafc;
   --bg-app: #f1f5f9;
+  --ring-brand: 99 102 241;
 }
 
 html,
@@ -15,15 +16,28 @@ body {
 
 body {
   @apply bg-ink-50 text-ink-900 antialiased;
-  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
   background-image:
-    radial-gradient(circle at 10% 0%, rgba(99, 102, 241, 0.05), transparent 40%),
-    radial-gradient(circle at 90% 20%, rgba(14, 165, 233, 0.04), transparent 35%);
+    radial-gradient(1200px 600px at 8% -10%, rgba(99, 102, 241, 0.07), transparent 60%),
+    radial-gradient(900px 500px at 95% 5%, rgba(14, 165, 233, 0.05), transparent 55%),
+    radial-gradient(700px 400px at 50% 110%, rgba(16, 185, 129, 0.04), transparent 55%);
   background-attachment: fixed;
 }
 
 ::selection {
   background: rgba(99, 102, 241, 0.2);
+}
+
+/* Slim, refined scrollbars on internal scroll containers. */
+.scroll-pretty::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.scroll-pretty::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-ink-200;
+}
+.scroll-pretty::-webkit-scrollbar-thumb:hover {
+  @apply bg-ink-300;
 }
 
 /* ----- Buttons ----- */
@@ -68,6 +82,44 @@ textarea.input {
 .card-flat {
   @apply rounded-xl border border-ink-200/70 bg-white p-5;
 }
+/* Hover-able card (use when the whole card is a link). */
+.card-link {
+  @apply card transition hover:-translate-y-[1px] hover:border-brand-300/80 hover:shadow-elevated;
+}
+
+/* Page-level header strip. Use as: <header class="page-header"> ... </header>
+   Keeps every top-of-page block aligned and consistent. */
+.page-header {
+  @apply flex flex-col gap-2 border-b border-ink-200/70 pb-5;
+}
+.eyebrow {
+  @apply text-[11px] font-medium uppercase tracking-[0.16em] text-ink-500;
+}
+
+/* ----- KPI tiles ----- */
+.kpi {
+  @apply relative overflow-hidden rounded-xl border border-ink-200/80 bg-white p-4 shadow-card;
+}
+.kpi::after {
+  /* subtle accent bar on the left edge — uses currentColor of an inner element */
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: currentColor;
+  opacity: 0.6;
+}
+.kpi-label {
+  @apply text-[11px] font-medium uppercase tracking-[0.14em] text-ink-500;
+}
+.kpi-value {
+  @apply mt-1 text-3xl font-semibold tabular-nums text-ink-900;
+}
+.kpi-hint {
+  @apply mt-0.5 text-xs text-ink-500;
+}
 
 /* ----- Badges ----- */
 .badge {
@@ -89,24 +141,96 @@ textarea.input {
   @apply badge bg-red-100 text-red-800;
 }
 
+/* Status pill with a leading colored dot. Apply alongside `badge`. */
+.dot {
+  @apply inline-block h-1.5 w-1.5 rounded-full;
+}
+.dot-emerald {
+  @apply dot bg-emerald-500 shadow-[0_0_0_3px_rgba(16,185,129,0.18)];
+}
+.dot-amber {
+  @apply dot bg-amber-500 shadow-[0_0_0_3px_rgba(245,158,11,0.2)];
+}
+.dot-sky {
+  @apply dot bg-sky-500 shadow-[0_0_0_3px_rgba(14,165,233,0.2)];
+}
+.dot-purple {
+  @apply dot bg-purple-500 shadow-[0_0_0_3px_rgba(168,85,247,0.2)];
+}
+.dot-red {
+  @apply dot bg-red-500 shadow-[0_0_0_3px_rgba(239,68,68,0.2)];
+}
+.dot-ink {
+  @apply dot bg-ink-400;
+}
+.dot-pulse {
+  animation: dot-pulse 1.8s ease-in-out infinite;
+}
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
 /* ----- Tables ----- */
 .table-clean {
   @apply w-full text-sm;
 }
 .table-clean thead {
-  @apply bg-ink-50/80 text-left text-[11px] uppercase tracking-[0.06em] text-ink-500;
+  @apply bg-ink-50/90 text-left text-[11px] uppercase tracking-[0.06em] text-ink-500 backdrop-blur;
 }
-.table-clean th {
-  @apply px-3 py-2 font-medium;
+.table-clean thead th {
+  @apply sticky top-0 z-[1] px-3 py-2.5 font-medium;
 }
 .table-clean tbody tr {
-  @apply border-t border-ink-100;
+  @apply border-t border-ink-100 transition-colors;
 }
 .table-clean tbody tr:hover {
-  @apply bg-ink-50/60;
+  @apply bg-brand-50/40;
 }
 .table-clean td {
-  @apply px-3 py-2;
+  @apply px-3 py-2.5 align-middle;
+}
+.table-wrap {
+  @apply overflow-hidden rounded-xl border border-ink-200/80 bg-white shadow-card;
+}
+
+/* ----- Toolbar / filter strip ----- */
+.toolbar {
+  @apply flex flex-wrap items-end gap-3 rounded-xl border border-ink-200/80 bg-white/70 p-3 shadow-card backdrop-blur;
+}
+.toolbar label {
+  @apply flex flex-col text-[11px] font-medium uppercase tracking-wide text-ink-500;
+}
+.toolbar select,
+.toolbar input[type='text'],
+.toolbar input[type='search'] {
+  @apply mt-1 rounded-md border border-ink-200 bg-white px-2.5 py-1.5 text-sm text-ink-900
+         focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/25;
+}
+
+/* ----- Banners ----- */
+.banner {
+  @apply flex items-start gap-2 rounded-xl border px-3 py-2.5 text-sm shadow-card;
+}
+.banner-info {
+  @apply banner border-brand-200/80 bg-brand-50/70 text-brand-800;
+}
+.banner-success {
+  @apply banner border-emerald-200/80 bg-emerald-50/70 text-emerald-800;
+}
+.banner-warn {
+  @apply banner border-amber-200/80 bg-amber-50/70 text-amber-800;
+}
+.banner-error {
+  @apply banner border-red-200/80 bg-red-50/70 text-red-800;
+}
+
+/* ----- Empty state ----- */
+.empty {
+  @apply flex flex-col items-center gap-2 rounded-xl border border-dashed border-ink-200 bg-white/60 p-8 text-center;
+}
+.empty-icon {
+  @apply grid h-10 w-10 place-items-center rounded-full bg-ink-100 text-ink-500;
 }
 
 /* ----- Utility ----- */
@@ -115,4 +239,7 @@ textarea.input {
 }
 .text-mono {
   @apply font-mono;
+}
+.divide-soft > * + * {
+  @apply border-t border-ink-200/70;
 }

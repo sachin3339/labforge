@@ -103,18 +103,17 @@ RUN printf '%s\n' \
 
 # ---------------------------------------------------------------------------
 # 4b. MySQL Server bootstrap.
-#     Kasm uses /dockerstartup/custom_startup.sh as a hook that runs as root
-#     before the desktop session starts. We use it to:
-#       - initialise /var/lib/mysql on first launch (apt's deb-postinst does
-#         this at image build time, but the data dir is wiped if a fresh
-#         volume is mounted at /var/lib/mysql per-instance)
-#       - start mysqld in the background on every launch
-#       - ensure the `root@localhost` account has a known password and a
-#         `trainer` user is available for Workbench connections.
+#     Kasm's /dockerstartup/custom_startup.sh runs as the unprivileged
+#     kasm-user (uid 1000), so it cannot start mysqld with --user=mysql nor
+#     touch /var/lib/mysql. Use /dockerstartup/kasm_post_run_root.sh instead,
+#     which the base image invokes as root after container startup.
+#     Pre-initialise /var/lib/mysql at build time so even fresh per-instance
+#     writable layers come up with a working datadir.
 # ---------------------------------------------------------------------------
-RUN install -d /dockerstartup
-COPY mysql-startup.sh /dockerstartup/custom_startup.sh
-RUN chmod +x /dockerstartup/custom_startup.sh
+RUN mkdir -p /var/run/mysqld /var/log/mysql \
+ && chown -R mysql:mysql /var/run/mysqld /var/log/mysql /var/lib/mysql
+COPY mysql-startup.sh /dockerstartup/kasm_post_run_root.sh
+RUN chmod +x /dockerstartup/kasm_post_run_root.sh
 
 # ---------------------------------------------------------------------------
 # 5. Clean up any root-owned droppings inside the kasm-user home. The base

@@ -42,9 +42,10 @@ export default async function CostPage({
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Reports — cost &amp; margin</h1>
-        <p className="text-sm text-ink-900/60">
+      <header className="page-header">
+        <div className="eyebrow">Analytics · Reports</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Cost &amp; margin</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-600">
           Cost is computed from compute hours × per-template <em>costPerHourUsd</em>. Revenue
           is redemptions × <em>priceListUsd</em>. Set both on each template to see margin.
         </p>

@@ -70,6 +70,13 @@ export const LabTemplateSpec = z.object({
    * Gated by LAB_ALLOW_PRIVILEGED on the control plane — refused otherwise.
    */
   privileged: z.boolean().default(false),
+  /**
+   * Relax the default lock-down so the in-container user can use sudo and
+   * root operations work normally. Drops `CapDrop:ALL` and the
+   * `no-new-privileges` security-opt. Use for training images where
+   * students need apt-get / service control. Does NOT imply --privileged.
+   */
+  allowRoot: z.boolean().default(false),
 
   // ---- Pricing (powers the admin Cost & Margin report) ----
 

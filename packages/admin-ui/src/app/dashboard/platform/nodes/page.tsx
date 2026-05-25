@@ -177,27 +177,46 @@ export default async function NodesPage() {
   }
   const nodes = res.data.nodes;
 
+  // Cluster overview cards — purely derived from the data we already fetch.
+  const enabledCount = nodes.filter((n) => n.enabled).length;
+  const liveContainers = nodes.reduce((a, n) => a + n._count.instances, 0);
+  const totalCapacity = nodes.reduce((a, n) => a + (n.capacityMax || 0), 0);
+
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Nodes</h1>
-        <p className="text-sm text-ink-900/60">
+      <header className="page-header">
+        <div className="eyebrow">Platform</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Nodes</h1>
+        <p className="mt-1 max-w-3xl text-sm text-ink-600">
           Physical hosts that run lab containers. New labs are scheduled to
           the node pinned on their template (or tenant), with{' '}
           <strong>default</strong> as the fallback.
         </p>
       </header>
 
-      {flash?.message && (
-        <div className="card border-emerald-300 bg-emerald-50 text-sm text-emerald-900">
-          {flash.message}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="kpi text-brand-500">
+          <div className="kpi-label">Nodes</div>
+          <div className="kpi-value">{nodes.length}</div>
         </div>
-      )}
-      {flash?.error && (
-        <div className="card border-red-300 bg-red-50 text-sm text-red-700">
-          {flash.error}
+        <div className="kpi text-emerald-500">
+          <div className="kpi-label">Enabled</div>
+          <div className="kpi-value">{enabledCount}</div>
+          <div className="kpi-hint">Accepting new labs</div>
         </div>
-      )}
+        <div className="kpi text-sky-500">
+          <div className="kpi-label">Live containers</div>
+          <div className="kpi-value">{liveContainers}</div>
+        </div>
+        <div className="kpi text-ink-500">
+          <div className="kpi-label">Total capacity</div>
+          <div className="kpi-value">{totalCapacity || '∞'}</div>
+          <div className="kpi-hint">Σ capacityMax across nodes</div>
+        </div>
+      </div>
+
+      {flash?.message && <div className="banner-success">{flash.message}</div>}
+      {flash?.error && <div className="banner-error">{flash.error}</div>}
 
       {/* ---- Create / connect a new node ---- */}
       <details className="card" open={nodes.length === 0}>

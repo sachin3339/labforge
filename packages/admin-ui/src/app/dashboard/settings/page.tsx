@@ -29,28 +29,40 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-ink-900/60">Manage tenant credentials.</p>
+      <header className="page-header">
+        <div className="eyebrow">Account</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-600">
+          Manage tenant credentials and integration access.
+        </p>
       </header>
 
       <section className="card space-y-3">
-        <h2 className="text-base font-semibold">Tenant</h2>
-        <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-sm">
-          <dt className="text-ink-900/60">Name</dt>
-          <dd>{me.data.tenant.name}</dd>
-          <dt className="text-ink-900/60">Tenant ID</dt>
-          <dd className="font-mono text-xs">{me.data.tenant.id}</dd>
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-semibold">Tenant</h2>
+          <span className="badge badge-muted">Read only</span>
+        </div>
+        <dl className="grid grid-cols-[8rem_1fr] gap-y-2 text-sm">
+          <dt className="text-ink-500">Name</dt>
+          <dd className="font-medium text-ink-900">{me.data.tenant.name}</dd>
+          <dt className="text-ink-500">Tenant ID</dt>
+          <dd className="font-mono text-xs text-ink-700">{me.data.tenant.id}</dd>
         </dl>
       </section>
 
-      <section className="card space-y-3">
-        <h2 className="text-base font-semibold">API key</h2>
-        <p className="text-sm text-ink-900/60">
-          Rotating the key invalidates the current one immediately. Update any
-          LMS integrations afterwards.
+      {/* Danger zone — visually separated so destructive actions don't blend
+          in with read-only tenant info above. */}
+      <section className="rounded-xl border border-red-200/80 bg-red-50/40 p-5 shadow-card">
+        <div className="flex items-center gap-2">
+          <span className="badge badge-danger">Danger zone</span>
+          <h2 className="text-base font-semibold text-red-900">API key</h2>
+        </div>
+        <p className="mt-2 text-sm text-red-900/80">
+          Rotating the key invalidates the current one immediately. Any LMS or
+          backend integration that still uses the old key will stop working
+          until you update its configuration.
         </p>
-        <form action={rotateKey}>
+        <form action={rotateKey} className="mt-3">
           <button className="btn-danger" type="submit">
             Rotate API key
           </button>

@@ -36,15 +36,15 @@ type Instance = {
   } | null;
 };
 
-const STATUS_TONE: Record<string, string> = {
-  ready: 'bg-green-100 text-green-800',
-  idle: 'bg-amber-100 text-amber-800',
-  pending: 'bg-blue-100 text-blue-800',
-  provisioning: 'bg-blue-100 text-blue-800',
-  paused: 'bg-purple-100 text-purple-800',
-  terminating: 'bg-ink-100 text-ink-900/70',
-  terminated: 'bg-ink-100 text-ink-900/50',
-  failed: 'bg-red-100 text-red-800',
+const STATUS_DOT: Record<string, string> = {
+  ready: 'dot-emerald',
+  idle: 'dot-amber',
+  pending: 'dot-sky',
+  provisioning: 'dot-sky',
+  paused: 'dot-purple',
+  terminating: 'dot-ink',
+  terminated: 'dot-ink',
+  failed: 'dot-red',
 };
 
 export default async function InstanceDetailPage({
@@ -78,42 +78,49 @@ export default async function InstanceDetailPage({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3 text-sm">
-        <Link href="/dashboard/instances" className="text-ink-900/60 hover:underline">
-          ← All instances
-        </Link>
-      </div>
-
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="font-mono text-xl">{i.subdomain}</h1>
-          <p className="mt-1 text-sm text-ink-900/60">
-            {i.template.name}
-            {i.template.description ? ` — ${i.template.description}` : ''}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className={`badge ${STATUS_TONE[i.status] ?? 'bg-ink-100'}`}>{i.status}</span>
-            {i.isPrewarm && <span className="badge bg-indigo-100 text-indigo-800">prewarm</span>}
-            {i.launch && !['terminated', 'failed'].includes(i.status) && (
-              <form action={openLaunchAction}>
-                <input type="hidden" name="launchId" value={i.launch.id} />
-                <SubmitButton
-                  variant="primary"
-                  pendingLabel="Opening lab…"
-                  title="Open the lab (admin preview). Sets an admin session cookie."
-                >
-                  Open lab ↗
-                </SubmitButton>
-              </form>
-            )}
+      <header className="page-header">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <Link
+              href="/dashboard/instances"
+              className="text-xs font-medium text-brand-700 hover:underline"
+            >
+              ← All instances
+            </Link>
+            <h1 className="mt-1 font-mono text-xl text-ink-900">{i.subdomain}</h1>
+            <p className="mt-1 text-sm text-ink-600">
+              {i.template.name}
+              {i.template.description ? ` — ${i.template.description}` : ''}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="badge badge-muted">
+                <span className={`dot ${STATUS_DOT[i.status] ?? 'dot-ink'}`} />
+                {i.status}
+              </span>
+              {i.isPrewarm && (
+                <span className="badge bg-indigo-100 text-indigo-800">prewarm</span>
+              )}
+              {i.launch && !['terminated', 'failed'].includes(i.status) && (
+                <form action={openLaunchAction}>
+                  <input type="hidden" name="launchId" value={i.launch.id} />
+                  <SubmitButton
+                    variant="primary"
+                    pendingLabel="Opening lab…"
+                    title="Open the lab (admin preview). Sets an admin session cookie."
+                  >
+                    Open lab ↗
+                  </SubmitButton>
+                </form>
+              )}
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-1">
-          {canSuspend && <ActionBtn action={suspendAction} id={i.id} label="Suspend" tone="warning" />}
-          {canResume && <ActionBtn action={resumeAction} id={i.id} label="Resume" tone="primary" />}
-          {canRestart && <ActionBtn action={restartAction} id={i.id} label="Restart" tone="secondary" />}
-          {canGrade && <ActionBtn action={gradeAction} id={i.id} label="Grade" tone="secondary" />}
+          <div className="flex flex-wrap items-center gap-1">
+            {canSuspend && <ActionBtn action={suspendAction} id={i.id} label="Suspend" tone="warning" />}
+            {canResume && <ActionBtn action={resumeAction} id={i.id} label="Resume" tone="primary" />}
+            {canRestart && <ActionBtn action={restartAction} id={i.id} label="Restart" tone="secondary" />}
+            {canGrade && <ActionBtn action={gradeAction} id={i.id} label="Grade" tone="secondary" />}
+          </div>
         </div>
       </header>
 

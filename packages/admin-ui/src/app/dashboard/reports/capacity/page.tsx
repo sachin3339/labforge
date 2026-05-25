@@ -48,15 +48,18 @@ export default async function CapacityPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Capacity</h1>
-          <p className="text-sm text-ink-900/60">
-            Right-now resource reservations on this tenant.
-          </p>
-        </div>
-        <div className="text-[10px] text-ink-900/40">
-          sampled {new Date(c.generatedAt).toLocaleTimeString()}
+      <header className="page-header">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow">Analytics · Reports</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Capacity</h1>
+            <p className="mt-1 max-w-2xl text-sm text-ink-600">
+              Right-now resource reservations on this tenant.
+            </p>
+          </div>
+          <div className="text-[10px] text-ink-500">
+            sampled {new Date(c.generatedAt).toLocaleTimeString()}
+          </div>
         </div>
       </header>
       <ReportTabs active="/dashboard/reports/capacity" />

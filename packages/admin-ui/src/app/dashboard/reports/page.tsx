@@ -70,22 +70,24 @@ export default async function ReportsOverviewPage({
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Reports</h1>
-          <p className="text-sm text-ink-900/60">
-            Executive view of platform health, usage, and capacity.
-          </p>
-        </div>
-        <div className="text-xs text-ink-900/50">
-          Window:{' '}
-          <span className="font-mono">
-            {o.from.slice(0, 10)} → {o.to.slice(0, 10)}
-          </span>
-          <span className="ml-2">·</span>{' '}
-          <span className="text-ink-900/40">
-            vs {o.previous.from.slice(0, 10)} → {o.previous.to.slice(0, 10)}
-          </span>
+      <header className="page-header">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow">Analytics</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Reports</h1>
+            <p className="mt-1 max-w-2xl text-sm text-ink-600">
+              Executive view of platform health, usage, and capacity.
+            </p>
+          </div>
+          <div className="rounded-lg border border-ink-200/70 bg-white/70 px-3 py-2 text-[11px] text-ink-600 backdrop-blur">
+            <div className="font-medium uppercase tracking-wide text-ink-500">Window</div>
+            <div className="font-mono text-ink-800">
+              {o.from.slice(0, 10)} → {o.to.slice(0, 10)}
+            </div>
+            <div className="mt-0.5 text-ink-400">
+              vs {o.previous.from.slice(0, 10)} → {o.previous.to.slice(0, 10)}
+            </div>
+          </div>
         </div>
       </header>
       <ReportTabs active="/dashboard/reports" />

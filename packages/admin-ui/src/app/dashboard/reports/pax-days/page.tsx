@@ -53,17 +53,20 @@ export default async function PaxDaysPage({
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Reports — pax-days</h1>
-          <p className="text-sm text-ink-900/60">
-            One pax-day = one distinct user redeeming a launch on a calendar day. Derived from
-            the <code>UsageEvent</code> audit log — the source of truth for invoicing.
-          </p>
+      <header className="page-header">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow">Analytics · Reports</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Pax-days</h1>
+            <p className="mt-1 max-w-2xl text-sm text-ink-600">
+              One pax-day = one distinct user redeeming a launch on a calendar day. Derived from
+              the <code className="rounded bg-ink-100 px-1.5 py-0.5 font-mono text-[12px] text-ink-800">UsageEvent</code> audit log — the source of truth for invoicing.
+            </p>
+          </div>
+          <a className="btn-secondary text-xs" href={csvHref} download>
+            Download CSV
+          </a>
         </div>
-        <a className="btn-secondary text-xs" href={csvHref} download>
-          Download CSV
-        </a>
       </header>
       <ReportTabs active="/dashboard/reports/pax-days" />
       <WindowPicker from={sp.from} to={sp.to} />

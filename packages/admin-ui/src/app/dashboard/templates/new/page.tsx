@@ -86,22 +86,23 @@ export default async function NewTemplatePage({
   const { error } = await searchParams;
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">New template</h1>
-          <p className="text-sm text-ink-900/60">
-            Define one kind of lab environment.
-          </p>
+      <header className="page-header">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="eyebrow">Catalog</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">New template</h1>
+            <p className="mt-1 max-w-2xl text-sm text-ink-600">
+              Define one kind of lab environment.
+            </p>
+          </div>
+          <Link href="/dashboard/templates" className="btn-secondary">
+            Cancel
+          </Link>
         </div>
-        <Link href="/dashboard/templates" className="btn-secondary">
-          Cancel
-        </Link>
       </header>
 
       {error && (
-        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-          Error: {error}
-        </div>
+        <div className="banner-error">Error: {error}</div>
       )}
 
       <form action={create} className="card space-y-5">

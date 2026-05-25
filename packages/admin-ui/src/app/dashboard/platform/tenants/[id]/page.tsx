@@ -138,19 +138,22 @@ async function terminateBatch(batchId) { await fetch(\`\${API}/api/v1/batches/\$
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <Link
-            href="/dashboard/platform/tenants"
-            className="text-xs text-brand-700 hover:underline"
-          >
-            ← All tenants
-          </Link>
-          <h1 className="mt-1 text-2xl font-semibold">{t.name}</h1>
-          <p className="text-sm text-ink-900/60">
-            Tenant {t.id} · role <strong>{t.role}</strong> · created{' '}
-            {new Date(t.createdAt).toLocaleDateString()}
-          </p>
+      <header className="page-header">
+        <div className="flex items-center justify-between">
+          <div>
+            <Link
+              href="/dashboard/platform/tenants"
+              className="text-xs font-medium text-brand-700 hover:underline"
+            >
+              ← All tenants
+            </Link>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">{t.name}</h1>
+            <p className="mt-1 text-sm text-ink-600">
+              Tenant <span className="font-mono text-ink-700">{t.id}</span> · role{' '}
+              <span className="badge badge-muted">{t.role}</span> · created{' '}
+              {new Date(t.createdAt).toLocaleDateString()}
+            </p>
+          </div>
         </div>
       </header>
 

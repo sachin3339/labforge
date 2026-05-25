@@ -33,9 +33,10 @@ export default async function UsagePage({
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Reports</h1>
-        <p className="text-sm text-ink-900/60">
+      <header className="page-header">
+        <div className="eyebrow">Analytics · Reports</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Usage</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-600">
           Aggregated usage, cost, and student activity for your tenant.
         </p>
       </header>

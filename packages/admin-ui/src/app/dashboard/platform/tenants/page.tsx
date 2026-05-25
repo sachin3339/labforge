@@ -52,9 +52,10 @@ export default async function PlatformTenantsPage() {
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold">Tenants</h1>
-        <p className="text-sm text-ink-900/60">
+      <header className="page-header">
+        <div className="eyebrow">Platform</div>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Tenants</h1>
+        <p className="mt-1 max-w-2xl text-sm text-ink-600">
           Clients integrating with the LabForge API. Each tenant gets a unique
           API key for programmatic access.
         </p>

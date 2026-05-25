@@ -88,16 +88,18 @@ export default async function HostHealthPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Host health</h1>
-          <p className="text-sm text-ink-900/60">
-            Live system metrics for{' '}
-            <span className="font-mono text-ink-900/80">{h.host.hostname}</span>{' '}
-            · {h.host.platform}/{h.host.arch} · refresh the page for a fresh
-            sample (Refresh every ~10s when watching).
-          </p>
-        </div>
+      <header className="page-header">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <div className="eyebrow">Analytics · Reports</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Host health</h1>
+            <p className="mt-1 max-w-2xl text-sm text-ink-600">
+              Live system metrics for{' '}
+              <span className="font-mono text-ink-800">{h.host.hostname}</span>{' '}
+              · {h.host.platform}/{h.host.arch} · refresh the page for a fresh
+              sample (Refresh every ~10s when watching).
+            </p>
+          </div>
         <div className="text-[10px] text-ink-900/40">
           sampled at {new Date(h.generatedAt).toLocaleTimeString()}
         </div>

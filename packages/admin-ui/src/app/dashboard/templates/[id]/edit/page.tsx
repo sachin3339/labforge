@@ -145,17 +145,20 @@ export default async function EditTemplatePage({
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Edit template</h1>
-          <p className="text-sm text-ink-900/60">
-            <span className="font-mono">{t.name}</span> — name is immutable;
-            edit description and spec.
-          </p>
+      <header className="page-header">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="eyebrow">Catalog</div>
+            <h1 className="mt-1 text-2xl font-semibold tracking-tight">Edit template</h1>
+            <p className="mt-1 text-sm text-ink-600">
+              <span className="font-mono text-ink-800">{t.name}</span> — name is immutable;
+              edit description and spec.
+            </p>
+          </div>
+          <Link href="/dashboard/templates" className="btn-secondary">
+            Cancel
+          </Link>
         </div>
-        <Link href="/dashboard/templates" className="btn-secondary">
-          Cancel
-        </Link>
       </header>
 
       {error && (

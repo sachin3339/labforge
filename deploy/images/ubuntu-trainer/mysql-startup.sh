@@ -1,22 +1,21 @@
 #!/bin/bash
-# Kasm runs this as root before the desktop session starts.
+# Kasm runs this as ROOT after container startup (kasm_post_run_root.sh).
 # Boots a local MySQL server so Workbench has a DB to point at.
 # Idempotent — safe to re-run on container restart.
-set -e
+set +e
 
 DATADIR=/var/lib/mysql
 LOGFILE=/var/log/mysql/error.log
 
 mkdir -p "$(dirname "$LOGFILE")" /var/run/mysqld
-chown -R mysql:mysql /var/run/mysqld "$(dirname "$LOGFILE")"
+chown -R mysql:mysql /var/run/mysqld "$(dirname "$LOGFILE")" "$DATADIR"
 
 # Initialise the data dir if it's empty (fresh per-instance volume).
 if [ ! -d "$DATADIR/mysql" ]; then
-  echo "[mysql] data dir empty, initialising..."
+  echo "[mysql] data dir empty, initialising..." >> "$LOGFILE"
+  mysqld --initialize-insecure --user=mysql --datadir="$DATADIR" >> "$LOGFILE" 2>&1
   chown -R mysql:mysql "$DATADIR"
-  mysqld --initialize-insecure --user=mysql --datadir="$DATADIR" >/dev/null 2>&1 || true
 fi
-chown -R mysql:mysql "$DATADIR"
 
 # Background mysqld. nohup so the desktop session start doesn't kill it.
 nohup mysqld --user=mysql --datadir="$DATADIR" \
