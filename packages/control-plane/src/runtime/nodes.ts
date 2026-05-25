@@ -185,16 +185,23 @@ export async function resolveNodeForProvision(
 }
 
 /**
- * Pick the enabled+healthy node with the fewest active instances. "Healthy"
+ * Pick the next enabled+healthy node using strict round-robin. "Healthy"
  * means a successful ping within the last `NODE_HEALTH_STALE_SECONDS`, OR
  * lastSeenAt=null (allow brand-new nodes to receive work before the first
  * poll completes — otherwise a fresh fleet would have nowhere to land).
  *
- * Active = anything not in {terminated, failed}. We count `isPrewarm` rows
- * too: warm pool consumes real resources and should count against capacity.
+ * Round-robin uses a process-local counter so it is immune to DB races
+ * during concurrent provisions (e.g. /batches/:id/prepare with
+ * concurrency=5 firing five picks within milliseconds). Counter survives
+ * across reconnects/heath polls; it only resets on a control-plane
+ * restart, which is acceptable because the resulting tiny first-launch
+ * bias self-corrects after a few provisions.
  *
- * Ties broken by name for deterministic placement (helps debugging).
+ * `capacityMax` is still honoured — saturated nodes are skipped and the
+ * counter rolls forward to the next eligible candidate.
  */
+let rrCursor = 0;
+
 async function pickLeastLoadedNode(): Promise<Node | null> {
   const staleSeconds = config.NODE_HEALTH_STALE_SECONDS;
   const cutoff = new Date(Date.now() - staleSeconds * 1000);
@@ -206,37 +213,46 @@ async function pickLeastLoadedNode(): Promise<Node | null> {
     orderBy: { name: 'asc' },
   });
   if (candidates.length === 0) return null;
-  if (candidates.length === 1) return candidates[0]!;
-
-  // One COUNT query, grouped by node — cheaper than N individual counts.
-  const counts = await prisma.labInstance.groupBy({
-    by: ['nodeId'],
-    where: {
-      nodeId: { in: candidates.map((n) => n.id) },
-      status: { notIn: ['terminated', 'failed'] },
-    },
-    _count: { _all: true },
-  });
-  const loadMap = new Map<string, number>();
-  for (const row of counts) {
-    if (row.nodeId) loadMap.set(row.nodeId, row._count._all);
+  if (candidates.length === 1) {
+    const only = candidates[0]!;
+    if (only.capacityMax > 0) {
+      const load = await prisma.labInstance.count({
+        where: { nodeId: only.id, status: { notIn: ['terminated', 'failed'] } },
+      });
+      if (load >= only.capacityMax) return null;
+    }
+    return only;
   }
 
-  let best = candidates[0]!;
-  let bestLoad = loadMap.get(best.id) ?? 0;
-  for (const n of candidates.slice(1)) {
-    const load = loadMap.get(n.id) ?? 0;
-    // Honour capacityMax: a saturated node is skipped even if it's the
-    // numerically lightest. 0 means "no cap".
-    if (n.capacityMax > 0 && load >= n.capacityMax) continue;
-    if (load < bestLoad) {
-      best = n;
-      bestLoad = load;
+  // Only fetch load counts if at least one node has a cap configured —
+  // round-robin alone handles uncapped fleets and avoids an extra query
+  // on the hot path.
+  const anyCapped = candidates.some((n) => n.capacityMax > 0);
+  const loadMap = new Map<string, number>();
+  if (anyCapped) {
+    const counts = await prisma.labInstance.groupBy({
+      by: ['nodeId'],
+      where: {
+        nodeId: { in: candidates.map((n) => n.id) },
+        status: { notIn: ['terminated', 'failed'] },
+      },
+      _count: { _all: true },
+    });
+    for (const row of counts) {
+      if (row.nodeId) loadMap.set(row.nodeId, row._count._all);
     }
   }
-  // If even `best` is over capacityMax, fall through (return null) so the
-  // caller drops to isDefault → legacy path. Better than throwing here and
-  // breaking provisioning entirely.
-  if (best.capacityMax > 0 && bestLoad >= best.capacityMax) return null;
-  return best;
+
+  // Walk the ring starting at rrCursor; skip nodes at capacity. Bail out
+  // after one full lap to avoid infinite loop when every node is full.
+  for (let i = 0; i < candidates.length; i += 1) {
+    const idx = (rrCursor + i) % candidates.length;
+    const cand = candidates[idx]!;
+    const load = loadMap.get(cand.id) ?? 0;
+    if (cand.capacityMax > 0 && load >= cand.capacityMax) continue;
+    rrCursor = (idx + 1) % candidates.length;
+    return cand;
+  }
+  // Every healthy node is at capacity; let caller drop to isDefault path.
+  return null;
 }
