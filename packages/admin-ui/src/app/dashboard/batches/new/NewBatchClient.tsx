@@ -137,7 +137,7 @@ export function NewBatchClient({ templates }: { templates: Template[] }) {
             name="durationMinutes"
             type="number"
             min={5}
-            max={480}
+            max={525600}
             defaultValue={120}
             required
             className="mt-1 w-full rounded-md border border-ink-200 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"

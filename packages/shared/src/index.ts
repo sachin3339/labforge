@@ -160,7 +160,7 @@ export const LaunchRequest = z.object({
   /** Stable LMS user id (we hash it; we never log it raw). */
   userId: z.string().min(1).max(256),
   userDisplayName: z.string().max(128).optional(),
-  durationMinutes: z.number().int().min(5).max(480).default(120),
+  durationMinutes: z.number().int().min(5).max(525600).default(120),
   /** Where to send the student when they exit the lab. */
   returnUrl: z.string().url().optional(),
   /** Webhook for lifecycle events (HMAC-signed). */
@@ -191,7 +191,7 @@ export const BatchLaunchRequest = z.object({
   templateId: z.string().min(1),
   count: z.number().int().min(1).max(500),
   /** Lab session length once the URL is redeemed. */
-  durationMinutes: z.number().int().min(5).max(480).default(120),
+  durationMinutes: z.number().int().min(5).max(525600).default(120),
   /**
    * How long the launch URL itself stays valid. The URL is reusable
    * within this window — the same student can revisit it across days,

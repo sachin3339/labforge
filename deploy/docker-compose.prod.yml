@@ -94,8 +94,13 @@ services:
       DOCKER_NETWORK: labforge_labnet
       LAB_DEFAULT_CPU: 1
       LAB_DEFAULT_MEMORY_MB: 1024
-      LAB_IDLE_TIMEOUT_MINUTES: 15
-      LAB_MAX_DURATION_MINUTES: 480
+      # Long-running labs (up to ~1 year). Idle/suspend reaping disabled so
+      # student sessions never go away on them; expiry-based reaping still
+      # runs on each launch's individual `expiresAt`.
+      LAB_IDLE_TIMEOUT_MINUTES: 525600
+      LAB_MAX_DURATION_MINUTES: 525600
+      LAB_SUSPEND_IDLE_MINUTES: 525600
+      LAB_HARD_INACTIVITY_DAYS: 365
       LAB_ALLOW_PRIVILEGED: 'true'
       PREWARM_ENABLED: 'true'
       PREWARM_INTERVAL_SECONDS: 15

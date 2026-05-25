@@ -65,8 +65,8 @@ const Env = z.object({
 
   LAB_DEFAULT_CPU: z.coerce.number().positive().default(1),
   LAB_DEFAULT_MEMORY_MB: z.coerce.number().int().positive().default(1024),
-  LAB_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(10),
-  LAB_MAX_DURATION_MINUTES: z.coerce.number().int().positive().default(240),
+  LAB_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(525600),
+  LAB_MAX_DURATION_MINUTES: z.coerce.number().int().positive().default(525600),
 
   /**
    * After this many minutes of no student activity, a running lab is
@@ -75,13 +75,13 @@ const Env = z.object({
    * can hold hundreds of suspended labs (only disk used) while only the
    * actively-in-use ones consume CPU/RAM.
    */
-  LAB_SUSPEND_IDLE_MINUTES: z.coerce.number().int().positive().default(30),
+  LAB_SUSPEND_IDLE_MINUTES: z.coerce.number().int().positive().default(525600),
   /**
    * If a lab has been suspended this long with no student activity, the
    * reaper hard-terminates it (container + volume gone) to reclaim disk.
    * Independent of batch expiry — protects against forgotten labs.
    */
-  LAB_HARD_INACTIVITY_DAYS: z.coerce.number().int().positive().default(14),
+  LAB_HARD_INACTIVITY_DAYS: z.coerce.number().int().positive().default(365),
   /**
    * Max seconds the redeem endpoint will wait for a resumed container's
    * upstream port to respond before falling back to the HTML "warming up"
