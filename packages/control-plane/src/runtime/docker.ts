@@ -259,6 +259,19 @@ export class DockerRuntime implements LabRuntime {
     }
   }
 
+  async volumeExists(name: string): Promise<boolean> {
+    try {
+      await this.docker.getVolume(name).inspect();
+      return true;
+    } catch (err: unknown) {
+      const e = err as { statusCode?: number };
+      if (e.statusCode === 404) return false;
+      // Treat any other error (network, ssh, etc.) as 'unknown' — caller
+      // must not assume the volume is absent on a transient failure.
+      throw err;
+    }
+  }
+
   /**
    * Tail the most recent log lines from a container. Returns a single
    * string with newlines preserved; truncated to the last `tail` lines.

@@ -72,6 +72,8 @@ export interface LabRuntime {
   resume(runtimeId: string): Promise<void>;
   /** Delete a named persistent volume. Idempotent. */
   destroyVolume(name: string): Promise<void>;
+  /** Check if a named persistent volume exists on this runtime's host. */
+  volumeExists(name: string): Promise<boolean>;
   /** Execute a command inside the running container/pod. */
   exec(runtimeId: string, req: ExecRequest): Promise<ExecResult>;
   /** Tail the last N lines of combined stdout+stderr (best-effort). */

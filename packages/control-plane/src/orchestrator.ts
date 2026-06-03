@@ -196,21 +196,49 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
   // are local to a host, so scheduling the replacement onto a different
   // node would silently create an empty volume with the same name there
   // and the student's work would appear lost. We never want that.
+  //
+  // We probe each enabled node's docker daemon for the volume directly
+  // rather than trusting the most-recent LabInstance.nodeId — that DB
+  // hint can be wrong when a previous provision incorrectly landed on
+  // a node where the volume was auto-created empty (e.g. before this
+  // sticky-node logic existed). The on-disk volume is the source of
+  // truth for "where does this student's data live".
   let node = null as Awaited<ReturnType<typeof resolveNodeForProvision>>;
   if (!input.isPrewarm && input.userIdHash && volumeName) {
-    const prior = await prisma.labInstance.findFirst({
-      where: {
-        templateId: input.template.id,
-        userIdHash: input.userIdHash,
-        volumeName,
-        nodeId: { not: null },
-      },
-      orderBy: { createdAt: 'desc' },
-      select: { nodeId: true },
+    const candidates = await prisma.node.findMany({
+      where: { enabled: true },
+      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
     });
-    if (prior?.nodeId) {
-      const pinned = await prisma.node.findUnique({ where: { id: prior.nodeId } });
-      if (pinned && pinned.enabled) node = pinned;
+    const probed: { node: Node; hasVolume: boolean }[] = [];
+    for (const c of candidates) {
+      try {
+        const rt = await getNodeRuntime(c);
+        const has = await rt.volumeExists(volumeName);
+        probed.push({ node: c, hasVolume: has });
+      } catch {
+        // Node unreachable: treat as unknown (don't pin to it, but also
+        // don't pin elsewhere if another reachable node has the volume).
+        probed.push({ node: c, hasVolume: false });
+      }
+    }
+    const holders = probed.filter((p) => p.hasVolume).map((p) => p.node);
+    if (holders.length === 1) {
+      node = holders[0];
+    } else if (holders.length > 1) {
+      // Multi-host volume collision (shouldn't normally happen). Prefer
+      // the most-recent prior instance's node if it's a holder; else the
+      // first holder by deterministic order.
+      const prior = await prisma.labInstance.findFirst({
+        where: {
+          templateId: input.template.id,
+          userIdHash: input.userIdHash,
+          volumeName,
+          nodeId: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { nodeId: true },
+      });
+      node = holders.find((h) => h.id === prior?.nodeId) ?? holders[0];
     }
   }
   if (!node) {

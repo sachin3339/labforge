@@ -40,6 +40,9 @@ function makeMockRuntime(): LabRuntime {
     async destroyVolume() {
       /* noop */
     },
+    async volumeExists() {
+      return false;
+    },
     async exec() {
       return { exitCode: 0, stdout: '', stderr: '', timedOut: false };
     },
