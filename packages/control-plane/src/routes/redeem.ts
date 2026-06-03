@@ -181,18 +181,44 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
     });
 
     const target = instanceUrl(instance.subdomain);
-    // Kasm desktops (linux-desktop / windows-desktop runtimes) display at
-    // their container resolution and letterbox the rest of the viewport with
-    // an unresponsive black/grey area. Asking KasmVNC to resize the desktop
-    // to match the iframe size eliminates the dead zone and gives the
-    // student a full, click-everywhere workspace.
     const templateSpec = (launch.template.spec ?? {}) as { runtime?: string };
-    const isDesktop =
+    // KasmVNC desktops (linux-desktop / windows-desktop) display at their
+    // container resolution and letterbox the rest of the viewport with an
+    // unresponsive black/grey area. Asking KasmVNC to resize the desktop to
+    // match the iframe size eliminates the dead zone and gives the student a
+    // full, click-everywhere workspace.
+    //
+    // KasmVNC tuning for a smooth, low-latency feel:
+    //  - prefer_local_cursor=true: the OS pointer is drawn client-side at the
+    //    browser's full frame-rate, so the cursor never "lags behind" the
+    //    mouse. This is the single biggest UX upgrade.
+    //  - enable_webp=true: WebP frames are ~30% smaller than JPEG at the
+    //    same perceived quality — less bandwidth, fewer dropped frames.
+    //  - dynamic_quality_min=6/max=9: keep crisp on idle, drop just enough
+    //    on motion to stay fluid (vs the default 4/9 which gets blurry).
+    //  - framerate=30: cap at 30 fps (default 24) — smoother typing/drag.
+    const isKasmDesktop =
       templateSpec.runtime === 'linux-desktop' ||
       templateSpec.runtime === 'windows-desktop';
-    const finalTarget = isDesktop
-      ? `${target}/?resize=remote&view_only=0`
-      : target;
+    // dockur/windows VM ships its own noVNC viewer on :8006. It honors a
+    // subset of standard noVNC URL params — autoconnect/resize/quality/
+    // compression. Higher quality + lower compression keeps the cursor
+    // crisp; resize=scale avoids the heavy "remote resize" RPC roundtrip
+    // dockur emulates poorly.
+    const isVm = templateSpec.runtime === 'vm';
+    let finalTarget: string;
+    if (isKasmDesktop) {
+      finalTarget =
+        `${target}/?resize=remote&view_only=0` +
+        `&prefer_local_cursor=true&enable_webp=true` +
+        `&dynamic_quality_min=6&dynamic_quality_max=9` +
+        `&framerate=30&idle_disconnect=false`;
+    } else if (isVm) {
+      finalTarget =
+        `${target}/?autoconnect=1&resize=scale&quality=7&compression=2&show_dot=1`;
+    } else {
+      finalTarget = target;
+    }
     // Cookie must be settable by the redeem endpoint's host AND readable by
     // the lab subdomain host. When redeem runs on api.<root> and labs live on
     // *.lab.<root>, the cookie must be scoped to the common parent <root>,

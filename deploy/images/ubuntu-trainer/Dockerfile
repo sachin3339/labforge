@@ -126,6 +126,57 @@ RUN rm -f /home/kasm-user/.wget-hsts /root/.wget-hsts \
  && chown -R 1000:0 /home/kasm-user
 
 # ---------------------------------------------------------------------------
+# 5b. Grant passwordless sudo to kasm-user.
+#     Trainees need to `apt-get install ...`, edit /etc/, run services, etc.
+#     during the session. The Kasm base ships without sudo configured, so we
+#     install it and add a NOPASSWD entry. Combined with `allowRoot: true`
+#     in the LabTemplate spec (keeps CAPS + drops no-new-privileges), this
+#     gives the student a fully-functional admin desktop inside the
+#     container's namespace — root inside the container, never root on the
+#     host.
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends sudo \
+ && echo 'kasm-user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-kasm-user \
+ && chmod 0440 /etc/sudoers.d/90-kasm-user \
+ && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# 5c. Screenshot tools.
+#     The kasmweb base image ships XFCE without a screenshot utility, so
+#     trainees can't capture their work from inside the desktop. Install
+#     xfce4-screenshooter (integrates with the XFCE menu + PrintScreen key)
+#     and flameshot (richer GUI with annotations). Both write to the
+#     student's home dir which lives on the per-instance named volume, so
+#     captures persist across restarts.
+# ---------------------------------------------------------------------------
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        xfce4-screenshooter \
+        flameshot \
+ && rm -rf /var/lib/apt/lists/*
+RUN printf '%s\n' \
+    '[Desktop Entry]' \
+    'Name=Screenshot' \
+    'Comment=Take a screenshot' \
+    'Exec=xfce4-screenshooter' \
+    'Icon=applets-screenshooter' \
+    'Terminal=false' \
+    'Type=Application' \
+    'Categories=Graphics;Utility;' \
+    > /usr/share/applications/xfce4-screenshooter.desktop
+RUN printf '%s\n' \
+    '[Desktop Entry]' \
+    'Name=Flameshot' \
+    'Comment=Screenshot with annotations' \
+    'Exec=flameshot gui' \
+    'Icon=flameshot' \
+    'Terminal=false' \
+    'Type=Application' \
+    'Categories=Graphics;Utility;' \
+    > /usr/share/applications/flameshot.desktop
+
+# ---------------------------------------------------------------------------
 # 6. Hand control back to the unprivileged kasm user that the base image
 #    launches the desktop as.
 # ---------------------------------------------------------------------------

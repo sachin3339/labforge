@@ -134,16 +134,22 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
       image: 'dockurr/windows:latest',
       runtime: 'vm',
       port: 8006,
-      cpu: 6,
-      memoryMb: 8192,
+      // QEMU is CPU-bound for framebuffer encoding — the noVNC stream gets
+      // visibly choppy on <8 vCPUs at 1080p. 8 cores + 10 GiB keeps Win11
+      // responsive even with a browser + IDE open inside.
+      cpu: 8,
+      memoryMb: 10240,
       env: {
         VERSION: '11',
-        RAM_SIZE: '8G',
-        CPU_CORES: '6',
+        RAM_SIZE: '10G',
+        CPU_CORES: '8',
         DISK_SIZE: '64G',
         DISPLAY: 'web',
-        WIDTH: '1600',
-        HEIGHT: '900',
+        // 1366x768 is the sweet spot: large enough to be usable, small
+        // enough that QEMU + noVNC keep up at 30fps without hardware
+        // acceleration. Bump up to 1600x900 only if the host has a real GPU.
+        WIDTH: '1366',
+        HEIGHT: '768',
         KVM: 'Y',
         // GPU passthrough requires a DRM render node on the host
         // (/dev/dri/renderD128). Bare metal hosts without an actual GPU
