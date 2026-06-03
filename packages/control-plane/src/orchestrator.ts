@@ -189,7 +189,33 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
   // to the load-spread scheduler immediately — without it, concurrent
   // provisions (e.g. /batches/:id/prepare with concurrency=5) all see the
   // same "0 load" snapshot and pile onto the same node.
-  const node = await resolveNodeForProvision(input.tenantId, input.template.id);
+  //
+  // Sticky node: if this user already has a persistent volume on a
+  // specific node (from a prior instance — terminated, failed, paused,
+  // anything), pin the new container to that same node. Docker volumes
+  // are local to a host, so scheduling the replacement onto a different
+  // node would silently create an empty volume with the same name there
+  // and the student's work would appear lost. We never want that.
+  let node = null as Awaited<ReturnType<typeof resolveNodeForProvision>>;
+  if (!input.isPrewarm && input.userIdHash && volumeName) {
+    const prior = await prisma.labInstance.findFirst({
+      where: {
+        templateId: input.template.id,
+        userIdHash: input.userIdHash,
+        volumeName,
+        nodeId: { not: null },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { nodeId: true },
+    });
+    if (prior?.nodeId) {
+      const pinned = await prisma.node.findUnique({ where: { id: prior.nodeId } });
+      if (pinned && pinned.enabled) node = pinned;
+    }
+  }
+  if (!node) {
+    node = await resolveNodeForProvision(input.tenantId, input.template.id);
+  }
 
   const instance = await prisma.labInstance.create({
     data: {
