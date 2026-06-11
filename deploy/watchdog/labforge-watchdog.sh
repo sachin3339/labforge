@@ -30,7 +30,7 @@ fi
 
 : "${TELEGRAM_BOT_TOKEN:=}"
 : "${TELEGRAM_CHAT_ID:=}"
-: "${PUBLIC_HEALTH_URL:=https://api.environments.learnlytica.com/api/v1/health}"
+: "${PUBLIC_HEALTH_URL:=https://api.environments.learnlytica.com/healthz}"
 : "${ALERT_COOLDOWN_SEC:=1800}"
 : "${MEM_WARN:=85}"
 : "${MEM_CRIT:=92}"
@@ -140,8 +140,13 @@ fi
 
 # 8. Public health endpoint (only fires from the host that owns the URL —
 #    reachable means the API + ingress + DNS path is healthy end-to-end).
-code=$(curl -fsS -k -o /dev/null -w '%{http_code}' \
-       --max-time 8 "$PUBLIC_HEALTH_URL" 2>/dev/null || echo 000)
+#    Use -s (silent) + -o /dev/null and only print %{http_code}. We do NOT
+#    use -f here, because -f makes curl exit non-zero on 4xx/5xx which
+#    would cause the `|| echo 000` fallback to concatenate with the real
+#    code (e.g. "404000"). Curl exit code 0 + non-200 body is fine.
+code=$(curl -sk -o /dev/null -w '%{http_code}' \
+       --max-time 8 "$PUBLIC_HEALTH_URL" 2>/dev/null)
+[ -z "$code" ] && code=000
 if [ "$code" != "200" ]; then
   alert "api-down" crit "control-plane API ${PUBLIC_HEALTH_URL} HTTP ${code}"
 else

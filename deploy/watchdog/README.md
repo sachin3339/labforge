@@ -44,7 +44,7 @@ sudo install -m 0755 /opt/labforge/deploy/watchdog/labforge-watchdog.sh \
 sudo tee /etc/labforge-watchdog.env >/dev/null <<EOF
 TELEGRAM_BOT_TOKEN=<paste-token>
 TELEGRAM_CHAT_ID=<paste-chat-id>
-PUBLIC_HEALTH_URL=https://api.environments.learnlytica.com/api/v1/health
+PUBLIC_HEALTH_URL=https://api.environments.learnlytica.com/healthz
 EOF
 sudo chmod 600 /etc/labforge-watchdog.env
 
