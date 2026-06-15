@@ -133,9 +133,17 @@ services:
       context: ..
       dockerfile: packages/admin-ui/Dockerfile
     restart: unless-stopped
+    # Hard memory cap. Kills + restarts the container if it leaks past this
+    # instead of letting it consume the whole host (we've seen it grow to
+    # 28 GB in ~4 days under traffic — there's an SSR error path that leaks
+    # request handles after "Cannot write headers after they are sent").
+    mem_limit: 2g
+    memswap_limit: 2g
     environment:
       NODE_ENV: production
       LABFORGE_API_URL: http://control-plane:4000
+      # Cap V8 heap so Node OOMs cleanly + restart kicks in before host swap.
+      NODE_OPTIONS: "--max-old-space-size=1536"
     depends_on:
       - control-plane
     networks:
