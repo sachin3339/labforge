@@ -93,13 +93,23 @@ elif [ -n "$disk_used" ] && [ "$disk_used" -lt 75 ]; then
   clear_alert "disk-warn"
 fi
 
-# 3. Load average sustained > 2× cores
+# 3. Load average sustained > 1.5× cores. Lowered from 2× after 2026-06-15
+#    incident where admin-ui leaked ~6 cores worth of work and load sat at
+#    ~74 on 12 cores for hours without alerting (74 > 24 should've fired,
+#    but on a 6c/12t box the 2× threshold = 24 is also high enough that
+#    a single runaway process can bury us before tripping it).
 cores=$(nproc 2>/dev/null || echo 1)
 la=$(awk '{print $1}' /proc/loadavg)
-la_int=$(printf '%.0f' "$la" 2>/dev/null || echo 0)
-cap=$((cores * 2))
-if [ "$la_int" -gt "$cap" ]; then
-  alert "load-high" warn "Load ${la} on ${cores} cores"
+# Use awk for the comparison so we can use a fractional multiplier (1.5×).
+la_warn=$(awk -v l="$la" -v c="$cores" 'BEGIN{print (l > c*1.5) ? 1 : 0}')
+la_crit=$(awk -v l="$la" -v c="$cores" 'BEGIN{print (l > c*3) ? 1 : 0}')
+if [ "$la_crit" = "1" ]; then
+  alert "load-crit" crit "Load ${la} on ${cores} cores (>3× — likely runaway process)"
+elif [ "$la_warn" = "1" ]; then
+  alert "load-warn" warn "Load ${la} on ${cores} cores"
+else
+  clear_alert "load-warn"
+  clear_alert "load-crit"
 fi
 
 # 4. Kernel OOM activity in last 5 min
@@ -127,6 +137,36 @@ for svc in deploy-control-plane-1 deploy-postgres-1 deploy-caddy-1 deploy-redis-
     *)       alert "svc-$svc" crit "${svc} is ${state}" ;;
   esac
 done
+
+# 6b. Platform container memory bloat. The admin-ui leaked to 28 GB on
+#     2026-06-15 before being detected. Alert when any platform container
+#     exceeds 4 GB RSS — none of them should ever legitimately use that.
+if command -v docker >/dev/null 2>&1; then
+  while IFS=$'\t' read -r name rss_bytes; do
+    [ -z "$rss_bytes" ] && continue
+    rss_gb=$(awk -v b="$rss_bytes" 'BEGIN{printf "%.1f", b/1024/1024/1024}')
+    rss_gb_int=$(printf '%.0f' "$rss_gb" 2>/dev/null || echo 0)
+    key="bloat-${name}"
+    if [ "$rss_gb_int" -ge 4 ]; then
+      alert "$key" warn "${name} RSS ${rss_gb} GB (leak suspected)"
+    else
+      clear_alert "$key"
+    fi
+  done < <(docker stats --no-stream --format '{{.Name}}\t{{.MemUsage}}' 2>/dev/null \
+           | awk -F'\t' '
+             $1 ~ /^deploy-/ {
+               # MemUsage looks like "27.94GiB / 125.7GiB" — extract the first value in bytes.
+               split($2, a, " / ")
+               val=a[1]
+               unit=val; gsub(/[0-9.]+/, "", unit)
+               num=val + 0
+               mult = 1
+               if (unit == "KiB") mult = 1024
+               else if (unit == "MiB") mult = 1024*1024
+               else if (unit == "GiB") mult = 1024*1024*1024
+               printf "%s\t%d\n", $1, num * mult
+             }')
+fi
 
 # 7. Student containers exited unexpectedly
 exited=$(docker ps -a --filter status=exited \
