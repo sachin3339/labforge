@@ -223,6 +223,12 @@ model Node {
   /// Absolute path on the control-plane host to the SSH private key used
   /// to authenticate to this node (PEM, no passphrase).
   sshKeyPath      String?
+  /// Plaintext SSH password — used when the node only allows password
+  /// auth (e.g. a managed VM where you can't drop a key into authorized_keys).
+  /// Treat as a secret: never returned by the platform API, never logged.
+  /// Provide either `sshKeyPath` OR `sshPassword`; if both are present,
+  /// the private key wins (more secure).
+  sshPassword     String?
   /// Where the wildcard proxy reaches this node's published container
   /// ports (IP or hostname). Typically a private/Tailscale address so we
   /// don't expose containers on the public internet.

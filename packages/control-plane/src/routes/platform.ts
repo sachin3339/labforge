@@ -159,7 +159,7 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
         _count: { select: { instances: true } },
       },
     });
-    return { nodes };
+    return { nodes: nodes.map(redactNode) };
   });
 
   // ----- Create node -----
@@ -172,13 +172,20 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
     }
     const node = await prisma.node.create({ data: body });
     reply.code(201);
-    return { node };
+    return { node: redactNode(node) };
   });
 
   // ----- Update node -----
   app.patch('/nodes/:id', async (req, reply) => {
     const { id } = z.object({ id: z.string() }).parse(req.params);
     const body = NodeWriteBody.partial().parse(req.body);
+    // Empty-string sshPassword from a form submit means "no change" — drop
+    // it from the update so we don't accidentally clear a stored secret
+    // every time the operator touches an unrelated field. Explicit `null`
+    // still clears (used by a "Remove password" affordance).
+    if (typeof body.sshPassword === 'string' && body.sshPassword === '') {
+      delete (body as { sshPassword?: unknown }).sshPassword;
+    }
     try {
       if (body.isDefault === true) {
         await prisma.node.updateMany({
@@ -190,7 +197,7 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
       // Connection settings may have changed — force a fresh dockerode
       // client next time anyone hits this node.
       invalidateNodeRuntime(id);
-      return { node };
+      return { node: redactNode(node) };
     } catch {
       reply.code(404);
       return { error: 'not_found' };
@@ -234,6 +241,10 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
 /**
  * Shared validator for node create/update. Operators only fill the SSH
  * fields when `connectionMode='ssh'`; the local mode ignores them.
+ *
+ * `sshPassword` is treated specially: an empty/missing value on PATCH
+ * means "leave unchanged" (so editors don't have to retype on every
+ * save). Send explicit `null` to clear it.
  */
 const NodeWriteBody = z.object({
   name: z.string().min(1).max(64),
@@ -243,12 +254,23 @@ const NodeWriteBody = z.object({
   sshUser: z.string().nullable().optional(),
   sshPort: z.number().int().min(1).max(65535).nullable().optional(),
   sshKeyPath: z.string().nullable().optional(),
+  sshPassword: z.string().nullable().optional(),
   proxyHost: z.string().min(1).default('127.0.0.1'),
   bindIp: z.string().min(1).default('127.0.0.1'),
   capacityMax: z.number().int().min(0).default(0),
   enabled: z.boolean().default(true),
   notes: z.string().nullable().optional(),
 });
+
+/**
+ * Strip secret fields before any node payload leaves the control-plane.
+ * sshPassword is the only true secret on the row (sshKeyPath is just a
+ * filesystem path on the control-plane host).
+ */
+function redactNode<T extends { sshPassword?: string | null }>(node: T): Omit<T, 'sshPassword'> {
+  const { sshPassword: _omit, ...safe } = node;
+  return safe;
+}
 
 /** Hex-encoded 32-byte random key. */
 function generateApiKey(): string {

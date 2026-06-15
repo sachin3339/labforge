@@ -61,7 +61,7 @@ export async function getNodeRuntime(node: Node | null): Promise<LabRuntime> {
  * node is reachable before they pin a template to it.
  */
 export async function pingNode(
-  node: Pick<Node, 'connectionMode' | 'sshHost' | 'sshUser' | 'sshPort' | 'sshKeyPath'>,
+  node: Pick<Node, 'connectionMode' | 'sshHost' | 'sshUser' | 'sshPort' | 'sshKeyPath' | 'sshPassword'>,
 ): Promise<{ ok: true; version: string } | { ok: false; error: string }> {
   try {
     const docker = await buildDockerClient(node as Node);
@@ -89,15 +89,26 @@ async function buildDockerClient(node: Node | null): Promise<Docker> {
   }
 
   if (node.connectionMode === 'ssh') {
-    if (!node.sshHost || !node.sshKeyPath) {
+    if (!node.sshHost) {
       throw new Error(
-        `node ${node.name} is connectionMode=ssh but is missing sshHost or sshKeyPath`,
+        `node ${node.name} is connectionMode=ssh but is missing sshHost`,
       );
     }
-    let key = sshKeyCache.get(node.sshKeyPath);
-    if (!key) {
-      key = await readFile(node.sshKeyPath);
-      sshKeyCache.set(node.sshKeyPath, key);
+    if (!node.sshKeyPath && !node.sshPassword) {
+      throw new Error(
+        `node ${node.name} is connectionMode=ssh but has neither sshKeyPath nor sshPassword`,
+      );
+    }
+    // Prefer key auth when both are configured — password should only be
+    // a fallback for hosts where the operator can't drop an SSH key.
+    let privateKey: Buffer | undefined;
+    if (node.sshKeyPath) {
+      let key = sshKeyCache.get(node.sshKeyPath);
+      if (!key) {
+        key = await readFile(node.sshKeyPath);
+        sshKeyCache.set(node.sshKeyPath, key);
+      }
+      privateKey = key;
     }
     // dockerode + ssh2: the underlying ssh2 client opens a streamlocal-
     // forward channel to /var/run/docker.sock on the remote host and pipes
@@ -109,7 +120,8 @@ async function buildDockerClient(node: Node | null): Promise<Docker> {
       port: node.sshPort ?? 22,
       username: node.sshUser ?? 'ubuntu',
       sshOptions: {
-        privateKey: key,
+        ...(privateKey ? { privateKey } : {}),
+        ...(!privateKey && node.sshPassword ? { password: node.sshPassword } : {}),
         // Strict host key checking is on by default in ssh2; for now we
         // accept any host key. Operators concerned about MITM should pin
         // a hostHash via `hostVerifier` later.

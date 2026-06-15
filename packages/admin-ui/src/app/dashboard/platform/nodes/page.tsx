@@ -12,6 +12,10 @@ type NodeRow = {
   sshUser: string | null;
   sshPort: number | null;
   sshKeyPath: string | null;
+  // sshPassword is intentionally omitted: the API redacts it before
+  // sending so the form never displays the stored secret. Edit semantics:
+  // leave the password input blank to keep the stored value, type a new
+  // password to overwrite, or click "Clear password" to remove it.
   proxyHost: string;
   bindIp: string;
   capacityMax: number;
@@ -142,8 +146,26 @@ function buildNodeBody(formData: FormData) {
         sshUser: String(formData.get('sshUser') ?? 'ubuntu').trim() || 'ubuntu',
         sshPort: Number(formData.get('sshPort') ?? '22') || 22,
         sshKeyPath: String(formData.get('sshKeyPath') ?? '').trim() || null,
+        // Password edit semantics:
+        //   - "Clear password" button submitted (sshPasswordClear=1) →
+        //     send explicit null so the server PATCH wipes the stored
+        //     value, regardless of what's typed in the input
+        //   - empty input            → omit the field, server keeps stored
+        //   - non-empty input        → set/overwrite the stored value
+        ...(() => {
+          if (formData.get('sshPasswordClear') === '1') return { sshPassword: null };
+          const raw = String(formData.get('sshPassword') ?? '');
+          if (raw === '') return {};
+          return { sshPassword: raw };
+        })(),
       }
-    : { sshHost: null, sshUser: null, sshPort: null, sshKeyPath: null };
+    : {
+        sshHost: null,
+        sshUser: null,
+        sshPort: null,
+        sshKeyPath: null,
+        sshPassword: null,
+      };
 
   return {
     name,
@@ -450,6 +472,34 @@ function NodeForm({
               placeholder="/etc/labforge/keys/node-2.pem"
               className="input"
             />
+          </Field>
+          <Field label="SSH password (only if key auth is unavailable)">
+            <input
+              name="sshPassword"
+              type="password"
+              autoComplete="new-password"
+              placeholder={node ? '•••••• (leave blank to keep stored)' : ''}
+              className="input"
+            />
+            <div className="mt-1 text-[11px] text-ink-900/60">
+              Stored on the control-plane only; never sent back to the
+              browser. Used when the host doesn't allow SSH key auth.
+              {node ? (
+                <>
+                  {' '}
+                  <button
+                    type="submit"
+                    name="sshPasswordClear"
+                    value="1"
+                    formNoValidate
+                    className="ml-1 text-red-600 underline underline-offset-2"
+                    title="Clear the stored password and save"
+                  >
+                    Clear password
+                  </button>
+                </>
+              ) : null}
+            </div>
           </Field>
         </div>
       </div>
