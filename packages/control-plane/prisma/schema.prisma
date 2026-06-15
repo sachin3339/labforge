@@ -44,9 +44,16 @@ model LabTemplate {
   spec        Json
   /// Optional: pin labs of this template to a specific node. Resolution
   /// order at provision time: instance.nodeId (explicit) > tenant.defaultNodeId
-  /// > template.defaultNodeId > Node.isDefault. Null = follow tenant/default.
+  /// > template.allowedNodeIds (round-robin within) > template.defaultNodeId
+  /// > Node.isDefault. Null = follow tenant/default.
   defaultNodeId String?
   defaultNode   Node?  @relation("TemplateDefaultNode", fields: [defaultNodeId], references: [id], onDelete: SetNull)
+  /// Round-robin pool. Empty array = "any enabled node" (legacy behaviour).
+  /// Non-empty = scheduler only considers these nodes for new instances of
+  /// this template, in round-robin order. Lets us bind heavyweight templates
+  /// (Windows VMs, GPU labs) to dedicated hosts without taking the rest of
+  /// the fleet out of rotation.
+  allowedNodeIds String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

@@ -123,8 +123,9 @@ async function buildDockerClient(node: Node | null): Promise<Docker> {
 /**
  * Resolve the node a fresh instance should land on. Resolution order:
  *   1. tenant.defaultNodeId (if the tenant has been pinned)
- *   2. template.defaultNodeId (if the template has been pinned)
- *   3. config.LAB_SCHEDULER='spread' → least-loaded healthy enabled node
+ *   2. template.defaultNodeId (if the template has been pinned to a single node)
+ *   3. config.LAB_SCHEDULER='spread' → least-loaded healthy enabled node,
+ *      restricted to template.allowedNodeIds when that list is non-empty
  *   4. the Node row flagged isDefault=true
  *   5. the only enabled node (when exactly one exists — single-box happy path)
  *
@@ -140,10 +141,13 @@ export async function resolveNodeForProvision(
     prisma.tenant.findUnique({ where: { id: tenantId }, select: { defaultNodeId: true } }),
     prisma.labTemplate.findUnique({
       where: { id: templateId },
-      select: { defaultNodeId: true },
+      select: { defaultNodeId: true, allowedNodeIds: true },
     }),
   ]);
 
+  // 1+2 — explicit single-node pin (tenant first, template second). A pin
+  // always wins over the round-robin pool, even if the pinned node isn't
+  // in `allowedNodeIds` (an explicit pin is the operator's override).
   const candidateId = tenant?.defaultNodeId ?? template?.defaultNodeId;
   if (candidateId) {
     const pinned = await prisma.node.findUnique({ where: { id: candidateId } });
@@ -157,13 +161,21 @@ export async function resolveNodeForProvision(
     if (pinned) return pinned;
   }
 
-  // Load-spread: when nothing is pinned, hand the new instance to whichever
-  // healthy enabled node currently has the fewest active rows. This is what
-  // lets a tenant say "spin up 50 of templateX" and have them automatically
-  // split across the fleet without per-template pinning.
+  // 3 — round-robin within the template's allowed-nodes pool. Empty list
+  // means "no restriction" (legacy single-tier fleet behaviour).
+  const allowed = (template?.allowedNodeIds ?? []).filter((id) => id.length > 0);
   if (config.LAB_SCHEDULER === 'spread') {
-    const spread = await pickLeastLoadedNode();
+    const spread = await pickLeastLoadedNode(allowed.length > 0 ? allowed : undefined);
     if (spread) return spread;
+    // If `allowedNodeIds` is set and we couldn't find a healthy member,
+    // fall through to the cluster default. We deliberately do NOT widen
+    // the search to nodes outside the whitelist — a Windows-only template
+    // landing on a Linux box would just fail to provision noisily.
+    if (allowed.length > 0) {
+      throw new Error(
+        `no healthy node available from template's allowed pool (${allowed.length} configured)`,
+      );
+    }
   }
 
   const def = await prisma.node.findFirst({
@@ -199,16 +211,28 @@ export async function resolveNodeForProvision(
  *
  * `capacityMax` is still honoured — saturated nodes are skipped and the
  * counter rolls forward to the next eligible candidate.
+ *
+ * `whitelist` (optional) restricts the candidate pool to nodes whose ids
+ * appear in the list. Used by templates that pin themselves to a subset
+ * of the fleet (e.g. Windows-only templates → Windows hosts). When omitted
+ * or empty, all enabled+healthy nodes are eligible.
  */
 let rrCursor = 0;
+// Track a separate cursor per whitelist key so a Windows-template
+// round-robin does not skew the next Ubuntu-template pick (and vice versa).
+// The map is unbounded but keys are deterministic strings sorted+joined,
+// so the cardinality is bounded by the number of distinct allowed-node
+// configurations, which in practice is small (typically <= 5).
+const rrCursorsByPool = new Map<string, number>();
 
-async function pickLeastLoadedNode(): Promise<Node | null> {
+async function pickLeastLoadedNode(whitelist?: string[]): Promise<Node | null> {
   const staleSeconds = config.NODE_HEALTH_STALE_SECONDS;
   const cutoff = new Date(Date.now() - staleSeconds * 1000);
   const candidates = await prisma.node.findMany({
     where: {
       enabled: true,
       OR: [{ lastSeenAt: null }, { lastSeenAt: { gte: cutoff } }],
+      ...(whitelist && whitelist.length > 0 ? { id: { in: whitelist } } : {}),
     },
     orderBy: { name: 'asc' },
   });
@@ -243,14 +267,23 @@ async function pickLeastLoadedNode(): Promise<Node | null> {
     }
   }
 
-  // Walk the ring starting at rrCursor; skip nodes at capacity. Bail out
+  // Pick the right round-robin cursor for this pool. The fleet-wide pool
+  // (no whitelist) keeps the legacy single-counter behaviour for back-compat
+  // with existing tests; pinned pools each get their own cursor.
+  const poolKey =
+    whitelist && whitelist.length > 0 ? [...whitelist].sort().join(',') : '__all__';
+  let cursor = poolKey === '__all__' ? rrCursor : (rrCursorsByPool.get(poolKey) ?? 0);
+
+  // Walk the ring starting at cursor; skip nodes at capacity. Bail out
   // after one full lap to avoid infinite loop when every node is full.
   for (let i = 0; i < candidates.length; i += 1) {
-    const idx = (rrCursor + i) % candidates.length;
+    const idx = (cursor + i) % candidates.length;
     const cand = candidates[idx]!;
     const load = loadMap.get(cand.id) ?? 0;
     if (cand.capacityMax > 0 && load >= cand.capacityMax) continue;
-    rrCursor = (idx + 1) % candidates.length;
+    const next = (idx + 1) % candidates.length;
+    if (poolKey === '__all__') rrCursor = next;
+    else rrCursorsByPool.set(poolKey, next);
     return cand;
   }
   // Every healthy node is at capacity; let caller drop to isDefault path.

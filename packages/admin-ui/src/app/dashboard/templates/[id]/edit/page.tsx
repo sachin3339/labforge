@@ -28,6 +28,7 @@ type Template = {
   description: string | null;
   spec: TemplateSpec;
   defaultNodeId: string | null;
+  allowedNodeIds: string[];
 };
 
 type NodeOpt = { id: string; name: string; isDefault: boolean; enabled: boolean };
@@ -57,6 +58,13 @@ async function update(templateId: string, formData: FormData) {
   // Empty-string select option means "unpin"; we send explicit null so the
   // server-side patch handler clears the FK instead of leaving it alone.
   const defaultNodeId: string | null = defaultNodeRaw === '' ? null : defaultNodeRaw;
+  // Multi-select for round-robin pool — one <input type="checkbox"
+  // name="allowedNodeIds"> per node row. FormData.getAll() returns every
+  // checked value. Empty array = "any enabled node" on the server.
+  const allowedNodeIds = formData
+    .getAll('allowedNodeIds')
+    .map((v) => String(v).trim())
+    .filter(Boolean);
 
   const env: Record<string, string> = {};
   for (const line of envRaw.split(/\r?\n/)) {
@@ -83,6 +91,7 @@ async function update(templateId: string, formData: FormData) {
     body: JSON.stringify({
       description,
       defaultNodeId,
+      allowedNodeIds,
       spec: {
         image,
         runtime,
@@ -195,6 +204,42 @@ export default async function EditTemplatePage({
             <p className="mt-1 text-[11px] text-ink-900/60">
               Every lab launched from this template will run on the pinned
               node. Leave blank to use the tenant pin or the cluster default.
+            </p>
+          </Field>
+        )}
+        {nodes.length > 0 && (
+          <Field label="Allowed nodes (round-robin pool)">
+            <div className="space-y-1 rounded-md border border-ink-200 bg-white p-3">
+              {nodes.map((n) => {
+                const checked = (t.allowedNodeIds ?? []).includes(n.id);
+                return (
+                  <label
+                    key={n.id}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      name="allowedNodeIds"
+                      value={n.id}
+                      defaultChecked={checked}
+                      disabled={!n.enabled}
+                    />
+                    <span className="font-mono">{n.name}</span>
+                    {n.isDefault && (
+                      <span className="text-[11px] text-ink-600">default</span>
+                    )}
+                    {!n.enabled && (
+                      <span className="text-[11px] text-amber-600">drained</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[11px] text-ink-900/60">
+              When at least one box is checked, this template's labs round-robin
+              only across the selected nodes. Leave all unchecked for the
+              cluster-wide default (every enabled node). The single-pin field
+              above always wins over this list.
             </p>
           </Field>
         )}

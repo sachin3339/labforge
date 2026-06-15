@@ -3,6 +3,8 @@ import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api';
 
+type NodeOpt = { id: string; name: string; isDefault: boolean; enabled: boolean };
+
 async function create(formData: FormData) {
   'use server';
   const name = String(formData.get('name') ?? '').trim();
@@ -24,6 +26,13 @@ async function create(formData: FormData) {
   const priceListRaw = String(formData.get('priceListUsd') ?? '').trim();
   const costPerHourUsd = costPerHourRaw ? Number(costPerHourRaw) : undefined;
   const priceListUsd = priceListRaw ? Number(priceListRaw) : undefined;
+  const defaultNodeRaw = String(formData.get('defaultNodeId') ?? '').trim();
+  const defaultNodeId: string | null | undefined =
+    defaultNodeRaw === '' ? undefined : defaultNodeRaw;
+  const allowedNodeIds = formData
+    .getAll('allowedNodeIds')
+    .map((v) => String(v).trim())
+    .filter(Boolean);
 
   const env: Record<string, string> = {};
   for (const line of envRaw.split(/\r?\n/)) {
@@ -52,6 +61,8 @@ async function create(formData: FormData) {
     body: JSON.stringify({
       name,
       description,
+      ...(defaultNodeId !== undefined ? { defaultNodeId } : {}),
+      ...(allowedNodeIds.length ? { allowedNodeIds } : {}),
       spec: {
         image,
         runtime,
@@ -84,6 +95,15 @@ export default async function NewTemplatePage({
   searchParams: Promise<{ error?: string }>;
 }) {
   const { error } = await searchParams;
+  // Best-effort node lookup. Tenants without platform access (403) just
+  // see no node-pinning section — round-robin defaults still work.
+  let nodes: NodeOpt[] = [];
+  try {
+    const res = await apiFetch<{ nodes: NodeOpt[] }>('/api/v1/platform/nodes');
+    if (res.ok) nodes = res.data.nodes ?? [];
+  } catch {
+    nodes = [];
+  }
   return (
     <div className="space-y-6">
       <header className="page-header">
@@ -163,6 +183,54 @@ export default async function NewTemplatePage({
             placeholder="PASSWORD=labforge"
           />
         </Field>
+
+        {nodes.length > 0 && (
+          <Field label="Pin to node (optional)">
+            <select name="defaultNodeId" className="input" defaultValue="">
+              <option value="">— follow tenant / default —</option>
+              {nodes.map((n) => (
+                <option key={n.id} value={n.id} disabled={!n.enabled}>
+                  {n.name}
+                  {n.isDefault ? ' (default)' : ''}
+                  {!n.enabled ? ' — drained' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-[11px] text-ink-900/60">
+              Every lab launched from this template will run on the pinned
+              node. Leave blank to use the tenant pin or the cluster default.
+            </p>
+          </Field>
+        )}
+        {nodes.length > 0 && (
+          <Field label="Allowed nodes (round-robin pool)">
+            <div className="space-y-1 rounded-md border border-ink-200 bg-white p-3">
+              {nodes.map((n) => (
+                <label key={n.id} className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    name="allowedNodeIds"
+                    value={n.id}
+                    disabled={!n.enabled}
+                  />
+                  <span className="font-mono">{n.name}</span>
+                  {n.isDefault && (
+                    <span className="text-[11px] text-ink-600">default</span>
+                  )}
+                  {!n.enabled && (
+                    <span className="text-[11px] text-amber-600">drained</span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <p className="mt-1 text-[11px] text-ink-900/60">
+              When at least one box is checked, this template's labs round-robin
+              only across the selected nodes. Leave all unchecked for the
+              cluster-wide default (every enabled node). The single-pin field
+              above always wins over this list.
+            </p>
+          </Field>
+        )}
 
         <details className="rounded-md border border-ink-100 bg-ink-50/40 px-4 py-3">
           <summary className="cursor-pointer text-sm font-medium">

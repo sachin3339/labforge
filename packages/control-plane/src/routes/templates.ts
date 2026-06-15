@@ -10,13 +10,36 @@ const CreateBody = z.object({
   spec: LabTemplateSpec,
   /** Pin this template to a specific node. Null/undefined = unpinned. */
   defaultNodeId: z.string().nullable().optional(),
+  /**
+   * Restrict round-robin scheduling to these nodes. Empty array (or
+   * omitted) means "any enabled node". Validated to refer to existing
+   * Node rows; unknown ids are rejected with 400.
+   */
+  allowedNodeIds: z.array(z.string()).optional(),
 });
 
 const UpdateBody = z.object({
   description: z.string().max(2048).optional(),
   spec: LabTemplateSpec.optional(),
   defaultNodeId: z.string().nullable().optional(),
+  allowedNodeIds: z.array(z.string()).optional(),
 });
+
+/**
+ * Verify every id in `ids` exists in the Node table. Returns the set of
+ * unknown ids (empty when all are valid). De-dupes silently — passing the
+ * same id twice is treated as once.
+ */
+async function findUnknownNodeIds(ids: string[]): Promise<string[]> {
+  const unique = Array.from(new Set(ids.filter((s) => s.length > 0)));
+  if (unique.length === 0) return [];
+  const known = await prisma.node.findMany({
+    where: { id: { in: unique } },
+    select: { id: true },
+  });
+  const knownIds = new Set(known.map((n) => n.id));
+  return unique.filter((id) => !knownIds.has(id));
+}
 
 export const templateRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
@@ -51,6 +74,13 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'invalid_body', issues: parsed.error.issues };
     }
 
+    const allowedNodeIds = parsed.data.allowedNodeIds ?? [];
+    const unknown = await findUnknownNodeIds(allowedNodeIds);
+    if (unknown.length > 0) {
+      reply.code(400);
+      return { error: 'unknown_node_ids', unknown };
+    }
+
     const created = await prisma.labTemplate.create({
       data: {
         tenantId: tenant.id,
@@ -58,6 +88,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
         description: parsed.data.description,
         spec: parsed.data.spec,
         defaultNodeId: parsed.data.defaultNodeId ?? null,
+        allowedNodeIds: Array.from(new Set(allowedNodeIds.filter((s) => s.length > 0))),
       },
     });
     return created;
@@ -78,6 +109,13 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       reply.code(404);
       return { error: 'not_found' };
     }
+    if (parsed.data.allowedNodeIds !== undefined) {
+      const unknown = await findUnknownNodeIds(parsed.data.allowedNodeIds);
+      if (unknown.length > 0) {
+        reply.code(400);
+        return { error: 'unknown_node_ids', unknown };
+      }
+    }
     const updated = await prisma.labTemplate.update({
       where: { id },
       data: {
@@ -87,6 +125,10 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
           parsed.data.defaultNodeId === undefined
             ? existing.defaultNodeId
             : parsed.data.defaultNodeId,
+        allowedNodeIds:
+          parsed.data.allowedNodeIds === undefined
+            ? existing.allowedNodeIds
+            : Array.from(new Set(parsed.data.allowedNodeIds.filter((s) => s.length > 0))),
       },
     });
     return updated;

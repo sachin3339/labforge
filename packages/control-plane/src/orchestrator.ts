@@ -240,6 +240,17 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
       });
       node = holders.find((h) => h.id === prior?.nodeId) ?? holders[0];
     }
+
+    // If the holder is outside the template's allowed-nodes pool, pin
+    // there anyway (data integrity beats scheduling policy) but warn so
+    // an operator can decide to migrate the volume later.
+    const allowed: string[] = (input.template as { allowedNodeIds?: string[] }).allowedNodeIds ?? [];
+    if (node && allowed.length > 0 && !allowed.includes(node.id)) {
+      console.warn(
+        `[orchestrator] volume ${volumeName} held by node '${node.name}' which is not in template ` +
+          `${input.template.id}.allowedNodeIds=[${allowed.join(',')}]; pinning to holder anyway`,
+      );
+    }
   }
   if (!node) {
     node = await resolveNodeForProvision(input.tenantId, input.template.id);
