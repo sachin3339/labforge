@@ -91,27 +91,25 @@ services:
     depends_on:
       - guacd
     environment:
-      # The official start.sh (kept because it deploys guacamole.war into
-      # Tomcat's webapps dir) copies $GUACAMOLE_HOME → ~/.guacamole at
-      # boot — that snapshot is what the auth provider then reads from.
-      # The path used by BasicFileAuthenticationProvider is hardcoded to
-      # $GUACAMOLE_HOME/user-mapping.xml; there is no
-      # `basic-user-mapping` override property despite folklore. So we
-      # use a TWO-PART mount:
-      #   1. /etc/guacamole (the template) for the boot-time `cp -a`
-      #   2. /home/guacamole/.guacamole/user-mapping.xml (a single-file
-      #      bind mount) so control-plane edits to the host file flow
-      #      through to the path Guacamole actually reads. The provider
-      #      polls mtime, so no restart is needed.
+      # The official start.sh does `cp -a $GUACAMOLE_HOME/. ~/.guacamole/`
+      # at boot. The auth provider then reads ~/.guacamole/user-mapping.xml
+      # at runtime — that path is hardcoded in BasicFileAuthenticationProvider.
+      #
+      # We use TWO single-file bind-mounts to thread the needle:
+      #   1. /etc/guacamole/guacamole.properties — the template; this is
+      #      what the boot-time `cp -a` reads. We deliberately do NOT
+      #      mount user-mapping.xml here, so cp doesn't try to clobber
+      #      a destination bind-mount (which would fail with EACCES).
+      #   2. /home/guacamole/.guacamole/user-mapping.xml — the LIVE file.
+      #      Mounted directly at the auth provider's read path. The
+      #      provider polls mtime, so control-plane edits to the host
+      #      file flow through with no restart.
       GUACAMOLE_HOME: /etc/guacamole
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
     volumes:
-      - ./guacamole:/etc/guacamole:ro
-      # Single-file bind-mount of the LIVE user-mapping.xml on top of the
-      # snapshot path. Must be :rw because start.sh's `cp -a` will write
-      # through it (same source/target file → harmless self-write).
-      - ./guacamole/user-mapping.xml:/home/guacamole/.guacamole/user-mapping.xml:rw
+      - ./guacamole/guacamole.properties:/etc/guacamole/guacamole.properties:ro
+      - ./guacamole/user-mapping.xml:/home/guacamole/.guacamole/user-mapping.xml:ro
     networks:
       - default
 
