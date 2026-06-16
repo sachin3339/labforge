@@ -155,12 +155,14 @@ export function renderUserMappingXml(rows: RenderRow[], gconf: GuacamoleConfig):
     if (r.spec.rdpPassword) {
       lines.push(`      <param name="password">${escapeXmlAttr(r.spec.rdpPassword)}</param>`);
     }
-    // 'any' lets guacd negotiate (NLA → TLS → RDP) so it works across
-    // dockur/windows builds that vary in supported security layers.
-    // Forcing 'nla' was rejected by Win11 builds we tested ("wrong
-    // security type?"). 'any' is what Guacamole's own docs recommend
-    // when the back-end RDP stack isn't fully under your control.
-    lines.push('      <param name="security">any</param>');
+    // Force NLA (HYBRID/CredSSP) only. We tried `any` first, but that
+    // makes guacd advertise SSL|HYBRID|HYBRID_EX in the X.224 NEG_REQ;
+    // dockur Win11 then picks HYBRID_EX (the highest) and guacd's
+    // CredSSP-Extended path fails against this build, surfaced as
+    // "Server refused connection (wrong security type?)". `xfreerdp
+    // /sec:nla` connects cleanly to the same VMs, so we lock guacd
+    // to plain CredSSP/HYBRID.
+    lines.push('      <param name="security">nla</param>');
     lines.push('      <param name="ignore-cert">true</param>');
     lines.push('      <param name="resize-method">display-update</param>');
     lines.push('      <param name="enable-wallpaper">false</param>');
