@@ -90,17 +90,29 @@ services:
     restart: unless-stopped
     depends_on:
       - guacd
+    # Run as the bundled `guacamole` user (uid 1001) so we can write to
+    # the bind-mounted config dir. Required because the file is owned
+    # root on the host (control-plane writes it as root).
+    user: "1001:1001"
     environment:
+      # The default start.sh entrypoint aggressively `rm`s the config
+      # files and regenerates them from env vars on every boot, which
+      # nukes our user-mapping.xml. We bypass that script and start
+      # Tomcat directly, since the file-based auth provider
+      # (BasicFileAuthenticationProvider) is built into the WAR and
+      # needs no special bootstrap. CATALINA_HOME must be exported here
+      # for the Tomcat scripts.
+      CATALINA_HOME: /usr/local/tomcat
+      GUACAMOLE_HOME: /home/guacamole/.guacamole
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
+    entrypoint: ["/usr/local/tomcat/bin/catalina.sh", "run"]
     volumes:
-      # Guacamole 1.5.x's entrypoint hardcodes ~guacamole/.guacamole as
-      # GUACAMOLE_HOME (the GUACAMOLE_HOME env var is ignored by the
-      # tomcat container's startup script). Mount our config dir there.
-      # The control-plane mounts the SAME host directory at /etc/guacamole
-      # (rw) and writes user-mapping.xml; Guacamole re-reads on every
-      # login so no restart is required after provision/destroy.
-      - ./guacamole:/home/guacamole/.guacamole:ro
+      # Same host directory as control-plane mounts at /etc/guacamole.
+      # Tomcat reads guacamole.properties + user-mapping.xml from
+      # GUACAMOLE_HOME on every login, so the control-plane's writes
+      # take effect with no service restart.
+      - ./guacamole:/home/guacamole/.guacamole:rw
     networks:
       - default
 
