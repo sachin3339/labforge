@@ -137,6 +137,24 @@ model LabInstance {
   /// Named Docker volume holding the student's persisted data. Same volume
   /// is re-mounted every time this (userIdHash, templateId) is re-provisioned.
   volumeName  String?
+  /// Worker-host directory holding this instance's qcow2 overlay
+  /// (`<dir>/data.img`), bind-mounted into the container at `/storage`.
+  /// Set only when the template's spec has `vmGoldenImage`. Used by
+  /// destroy() to clean the overlay up; null on legacy / non-VM rows.
+  vmOverlayPath String?
+  /// Ephemeral host port the worker node assigned to the container's
+  /// RDP port. Captured at provision time so the Guacamole gateway
+  /// knows where to dial when the student redeems their lab. Null on
+  /// non-VM / non-Guacamole instances.
+  rdpHostPort Int?
+  /// Guacamole login username for this instance — random per-instance
+  /// so a leaked URL/password only exposes ONE student's lab. Re-used
+  /// across resume/redeem cycles for the lifetime of the row.
+  guacamoleUser     String?
+  /// Guacamole login password (random, ~24 char). Used to log in to
+  /// the gateway; not the Windows RDP password (which is in the
+  /// template spec). Reset only when the row is destroyed.
+  guacamolePassword String?
   /// When the lab was last suspended (docker stop). Null while active.
   suspendedAt DateTime?
   createdAt   DateTime @default(now())
@@ -258,4 +276,42 @@ model Node {
   tenantDefaults      Tenant[]      @relation("TenantDefaultNode")
 
   @@index([enabled, isDefault])
+}
+
+/// Environment-wide Apache Guacamole gateway config. At most one row
+/// (id = 'singleton'). Used by the redeem flow when a template's spec
+/// has `viewer: 'guacamole-rdp'`: the control-plane creates a per-lab
+/// connection in Guacamole (file-based user-mapping in v1, REST API
+/// later), then redirects the student to a tokenised client URL on
+/// `publicUrl`.
+model GuacamoleConfig {
+  id           String   @id @default("singleton")
+  /// Public origin where students reach Guacamole, e.g.
+  /// "https://rdp.labforge.example.com". No trailing slash.
+  publicUrl    String
+  /// Path on the Guacamole host to user-mapping.xml when using
+  /// file-based auth. The control-plane (re)writes this file on every
+  /// connection lifecycle change. Guacamole reads it fresh on every
+  /// login, so no service reload is needed. e.g.
+  /// "/opt/guacamole/user-mapping.xml".
+  userMappingPath String?
+  /// When set, the control-plane writes user-mapping.xml on this remote
+  /// host via SSH (separate from the worker-node SSH config — the
+  /// Guacamole host is usually the primary, not a worker). Leave null
+  /// to write to the local filesystem (Guacamole running in Docker on
+  /// the same machine as the control-plane, with the file bind-mounted).
+  sshHost      String?
+  sshUser      String?  @default("ubuntu")
+  sshPort      Int?     @default(22)
+  sshKeyPath   String?
+  sshPassword  String?
+  /// Host (IP/DNS) the GUACAMOLE container uses to reach the worker
+  /// node's published RDP host port. For a same-machine deploy this
+  /// is "host.docker.internal" or the host's private IP; for cross-
+  /// host it's the worker's public/private IP. Per-instance lookup
+  /// uses `Node.proxyHost` first and falls back here when empty.
+  defaultRdpHost String?
+  enabled      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

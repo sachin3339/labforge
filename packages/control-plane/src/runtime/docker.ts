@@ -101,6 +101,13 @@ export class DockerRuntime implements LabRuntime {
       await this.ensureVolume(vol.name);
       binds.push(`${vol.name}:${vol.containerPath}`);
     }
+    // Direct host-path binds (linked-clone overlays etc). The
+    // orchestrator is responsible for creating the host path before
+    // calling provision; we don't create or own it here.
+    for (const m of req.bindMounts ?? []) {
+      const ro = m.readOnly ? ':ro' : '';
+      binds.push(`${m.hostPath}:${m.containerPath}${ro}`);
+    }
 
     const env = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`);
 
@@ -110,6 +117,24 @@ export class DockerRuntime implements LabRuntime {
       PathInContainer: path,
       CgroupPermissions: 'rwm',
     }));
+
+    // ExposedPorts + PortBindings: always the primary `spec.port`, plus
+    // any extras the caller asked for (e.g. RDP 3389 on Windows VMs).
+    const exposedPorts: Record<string, object> = {
+      [`${spec.port}/tcp`]: {},
+    };
+    const portBindings: Record<
+      string,
+      Array<{ HostIp: string; HostPort: string }>
+    > = {
+      [`${spec.port}/tcp`]: [{ HostIp: this.bindIp, HostPort: '0' }],
+    };
+    for (const cp of req.extraPortBindings ?? []) {
+      if (cp === spec.port) continue; // already exposed
+      const key = `${cp}/tcp`;
+      exposedPorts[key] = {};
+      portBindings[key] = [{ HostIp: this.bindIp, HostPort: '0' }];
+    }
 
     const container = await this.docker.createContainer({
       name,
@@ -121,7 +146,7 @@ export class DockerRuntime implements LabRuntime {
         'labforge.subdomain': subdomain,
         ...req.labels,
       },
-      ExposedPorts: { [`${spec.port}/tcp`]: {} },
+      ExposedPorts: exposedPorts,
       HostConfig: {
         NetworkMode: config.DOCKER_NETWORK,
         Memory: spec.memoryMb * 1024 * 1024,
@@ -144,9 +169,7 @@ export class DockerRuntime implements LabRuntime {
         // `<node.proxyHost>:<assigned-host-port>` — there is no shared
         // labnet across nodes. We bind to `node.bindIp` so operators can
         // restrict exposure to a private interface.
-        PortBindings: {
-          [`${spec.port}/tcp`]: [{ HostIp: this.bindIp, HostPort: '0' }],
-        },
+        PortBindings: portBindings,
       },
       NetworkingConfig: {
         EndpointsConfig: {
@@ -169,10 +192,19 @@ export class DockerRuntime implements LabRuntime {
         `lab container ${name} started but no host port binding was created`,
       );
     }
+    // Resolve extras (e.g. RDP). Non-fatal if missing — caller decides
+    // whether the absence is an error.
+    const extraHostPorts: Record<number, number> = {};
+    for (const cp of req.extraPortBindings ?? []) {
+      if (cp === spec.port) continue;
+      const b = info.NetworkSettings?.Ports?.[`${cp}/tcp`]?.[0];
+      if (b?.HostPort) extraHostPorts[cp] = Number(b.HostPort);
+    }
     return {
       runtimeId: container.id,
       upstream: `${this.proxyHost}:${hostPort}`,
       hostPort: Number(hostPort),
+      extraHostPorts: Object.keys(extraHostPorts).length ? extraHostPorts : undefined,
     };
   }
 
@@ -324,7 +356,12 @@ export class DockerRuntime implements LabRuntime {
    */
   async inspectInstance(
     runtimeId: string,
-  ): Promise<{ running: boolean; hostPort?: number; upstream?: string } | null> {
+  ): Promise<{
+    running: boolean;
+    hostPort?: number;
+    upstream?: string;
+    allHostPorts?: Record<string, number>;
+  } | null> {
     try {
       const info = await this.docker.getContainer(runtimeId).inspect();
       const running = !!info.State?.Running;
@@ -333,17 +370,26 @@ export class DockerRuntime implements LabRuntime {
         Array<{ HostIp?: string; HostPort?: string }> | null
       >;
       let hostPort: number | undefined;
-      for (const bindings of Object.values(portsMap)) {
+      const allHostPorts: Record<string, number> = {};
+      for (const [key, bindings] of Object.entries(portsMap)) {
         if (!bindings || bindings.length === 0) continue;
         const p = Number(bindings[0]?.HostPort);
-        if (Number.isFinite(p) && p > 0) {
-          hostPort = p;
-          break;
-        }
+        if (!Number.isFinite(p) || p <= 0) continue;
+        allHostPorts[key] = p;
+        // Keep the legacy "first match wins" for the primary hostPort —
+        // most labs publish exactly one port and that's what the wildcard
+        // proxy needs. Callers wanting a specific container port read
+        // `allHostPorts` directly.
+        if (hostPort === undefined) hostPort = p;
       }
       return hostPort
-        ? { running, hostPort, upstream: `${this.proxyHost}:${hostPort}` }
-        : { running };
+        ? {
+            running,
+            hostPort,
+            upstream: `${this.proxyHost}:${hostPort}`,
+            allHostPorts,
+          }
+        : { running, allHostPorts };
     } catch (err: unknown) {
       const e = err as { statusCode?: number };
       if (e.statusCode === 404) return null;

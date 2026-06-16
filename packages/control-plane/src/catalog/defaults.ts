@@ -126,12 +126,31 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
   },
 
   // ----- Windows 11 (QEMU-in-container via dockur/windows) -----
+  //
+  // Bare-metal default: no `vmGoldenImage`, no `rdpPassword`, viewer
+  // defaults to noVNC :8006 — works on any KVM host out of the box but
+  // every clone re-runs Windows Setup (~25 min, ~64 GiB write per
+  // student). Production deployments edit this template post-seed in
+  // the admin UI to:
+  //
+  //   - set `vmGoldenImage` to a captured raw image on the worker node
+  //     (e.g. /opt/labforge/win-golden/golden.img) — flips the
+  //     orchestrator into linked-clone mode (qcow2 overlay, ~2 GiB
+  //     per student instead of 64 GiB)
+  //   - set `viewer = 'guacamole-rdp'`, `rdpUsername = 'Docker'`, and
+  //     `rdpPassword = '<the password set inside Windows>'` — flips
+  //     the redeem flow into Guacamole RDP mode (clipboard, copy/paste,
+  //     much smoother than noVNC at scale)
+  //
+  // The image tag is pinned to a known-good dockur/windows release —
+  // `:latest` regressed twice during golden-image testing and lost a
+  // run mid-install with no log line.
   {
     name: 'windows-11',
     description:
-      'Windows 11 desktop in a browser. Needs a KVM-capable host (LAB_ALLOW_PRIVILEGED=true).',
+      'Windows 11 desktop in a browser. Needs a KVM-capable host (LAB_ALLOW_PRIVILEGED=true). Edit post-seed to enable golden-image clones and Guacamole RDP.',
     spec: {
-      image: 'dockurr/windows:latest',
+      image: 'dockurr/windows:4.34',
       runtime: 'vm',
       port: 8006,
       // QEMU is CPU-bound for framebuffer encoding — the noVNC stream gets
@@ -163,6 +182,10 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
       devices: ['/dev/kvm', '/dev/net/tun'],
       capAdd: ['NET_ADMIN'],
       privileged: true,
+      // The dockur container's default internal RDP port. Not the host
+      // port — the host port is ephemeral, assigned by Docker on start
+      // and persisted to LabInstance.rdpHostPort so Guacamole can dial it.
+      rdpContainerPort: 3389,
       costPerHourUsd: 0.12,
       priceListUsd: 6.0,
     },

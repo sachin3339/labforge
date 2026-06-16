@@ -1,14 +1,22 @@
 import type { FastifyPluginAsync } from 'fastify';
 import { z } from 'zod';
+import { LabTemplateSpec } from '@labforge/shared';
 import { prisma } from '../db.js';
 import { verifyLaunchToken, signSessionToken } from '../auth/jwt.js';
 import {
   acquireInstance,
   instanceUrl,
+  resolveViewer,
   resumeInstance,
   runtimeFor,
   waitUntilReady,
 } from '../orchestrator.js';
+import {
+  ensureGuacamoleCredentials,
+  guacamoleClientUrl,
+  loadGuacamoleConfig,
+  regenerateUserMapping,
+} from '../runtime/guacamole.js';
 import { config } from '../config.js';
 import { warmingUpHtml } from '../ui/warmingPage.js';
 import { emitUsage } from '../metering.js';
@@ -179,6 +187,38 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
       tenantId: launch.tenantId,
       userIdHash: launch.userIdHash,
     });
+
+    // Guacamole gateway branch: when the template's resolved viewer is
+    // `guacamole-rdp`, the student is redirected to the gateway host
+    // (different origin) with auto-login query params instead of the
+    // lab's subdomain. We mint per-instance creds idempotently and
+    // re-render the user-mapping.xml so this URL works on first click.
+    //
+    // If the gateway isn't configured / disabled, fall through to the
+    // legacy in-container noVNC flow so an operator who hasn't finished
+    // wiring Guacamole yet still has a working lab.
+    const parsedSpec = LabTemplateSpec.safeParse(launch.template.spec);
+    if (parsedSpec.success && resolveViewer(parsedSpec.data) === 'guacamole-rdp') {
+      try {
+        const gconf = await loadGuacamoleConfig(prisma);
+        if (gconf && gconf.enabled && gconf.publicUrl) {
+          const creds = await ensureGuacamoleCredentials(prisma, instance.id);
+          await regenerateUserMapping(prisma);
+          const url = guacamoleClientUrl(gconf, creds.user, creds.password);
+          // No lf_session cookie here — Guacamole is a separate origin
+          // and uses its own auth (the username/password in the URL).
+          reply.redirect(url, 302);
+          return;
+        }
+      } catch (err) {
+        // Don't fail the redeem on Guacamole hiccups — fall through to
+        // the noVNC URL so the student still gets their lab.
+        req.log.warn(
+          { err: (err as Error).message, instanceId: instance.id },
+          'guacamole redeem fallback',
+        );
+      }
+    }
 
     const target = instanceUrl(instance.subdomain);
     const templateSpec = (launch.template.spec ?? {}) as { runtime?: string };

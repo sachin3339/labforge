@@ -26,6 +26,17 @@ async function create(formData: FormData) {
   const priceListRaw = String(formData.get('priceListUsd') ?? '').trim();
   const costPerHourUsd = costPerHourRaw ? Number(costPerHourRaw) : undefined;
   const priceListUsd = priceListRaw ? Number(priceListRaw) : undefined;
+  const vmGoldenImage = String(formData.get('vmGoldenImage') ?? '').trim() || undefined;
+  const vmOverlaySize = String(formData.get('vmOverlaySize') ?? '').trim() || undefined;
+  const viewerRaw = String(formData.get('viewer') ?? 'auto').trim();
+  const viewer: 'auto' | 'native-http' | 'novnc' | 'guacamole-rdp' =
+    viewerRaw === 'native-http' || viewerRaw === 'novnc' || viewerRaw === 'guacamole-rdp'
+      ? viewerRaw
+      : 'auto';
+  const rdpUsername = String(formData.get('rdpUsername') ?? '').trim() || undefined;
+  const rdpPassword = String(formData.get('rdpPassword') ?? '').trim() || undefined;
+  const rdpContainerPortRaw = String(formData.get('rdpContainerPort') ?? '').trim();
+  const rdpContainerPort = rdpContainerPortRaw ? Number(rdpContainerPortRaw) : undefined;
   const defaultNodeRaw = String(formData.get('defaultNodeId') ?? '').trim();
   const defaultNodeId: string | null | undefined =
     defaultNodeRaw === '' ? undefined : defaultNodeRaw;
@@ -33,7 +44,6 @@ async function create(formData: FormData) {
     .getAll('allowedNodeIds')
     .map((v) => String(v).trim())
     .filter(Boolean);
-
   const env: Record<string, string> = {};
   for (const line of envRaw.split(/\r?\n/)) {
     const [k, ...rest] = line.split('=');
@@ -78,6 +88,12 @@ async function create(formData: FormData) {
         ...(privileged ? { privileged: true } : {}),
         ...(costPerHourUsd !== undefined ? { costPerHourUsd } : {}),
         ...(priceListUsd !== undefined ? { priceListUsd } : {}),
+        ...(vmGoldenImage ? { vmGoldenImage } : {}),
+        ...(vmOverlaySize ? { vmOverlaySize } : {}),
+        ...(viewer !== 'auto' ? { viewer } : {}),
+        ...(rdpUsername ? { rdpUsername } : {}),
+        ...(rdpPassword ? { rdpPassword } : {}),
+        ...(rdpContainerPort ? { rdpContainerPort } : {}),
         ...(grader ? { grader } : {}),
       },
     }),
@@ -264,6 +280,77 @@ export default async function NewTemplatePage({
                 <span>Run privileged (gated by host config)</span>
               </label>
             </div>
+          </div>
+        </details>
+
+        <details className="rounded-md border border-ink-100 bg-ink-50/40 px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium">
+            VM &amp; RDP gateway (Windows / KVM only)
+          </summary>
+          <div className="mt-4 space-y-4">
+            <p className="text-xs text-ink-900/60">
+              Optional. When set, the orchestrator boots this template as a
+              linked clone of a pre-built golden disk image and (if Guacamole
+              is configured) hands the student a browser RDP session
+              instead of noVNC. Ignored unless lab kind is{' '}
+              <span className="font-mono">vm</span>.
+            </p>
+            <Field
+              label="Golden image path on worker node"
+              hint="absolute path to the read-only raw disk; leave blank to use the in-container ISO install path"
+            >
+              <input
+                name="vmGoldenImage"
+                className="input font-mono"
+                placeholder="/opt/labforge/win-golden/golden.img"
+              />
+            </Field>
+            <Field
+              label="Overlay size"
+              hint="qemu-img logical size for the per-instance qcow2 overlay"
+            >
+              <input
+                name="vmOverlaySize"
+                className="input font-mono"
+                placeholder="64G"
+              />
+            </Field>
+            <Field
+              label="Viewer"
+              hint='"auto" → guacamole-rdp when RDP creds set, else native-http'
+            >
+              <select name="viewer" className="input" defaultValue="auto">
+                <option value="auto">auto (recommended)</option>
+                <option value="native-http">native-http (subdomain proxy)</option>
+                <option value="novnc">novnc (in-container :8006)</option>
+                <option value="guacamole-rdp">guacamole-rdp</option>
+              </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="RDP username" hint="dockur/windows default = Docker">
+                <input
+                  name="rdpUsername"
+                  className="input font-mono"
+                  placeholder="Docker"
+                />
+              </Field>
+              <Field label="RDP password" hint="stored in spec; redacted in API reads">
+                <input
+                  name="rdpPassword"
+                  type="password"
+                  className="input font-mono"
+                  autoComplete="new-password"
+                />
+              </Field>
+            </div>
+            <Field label="RDP container port" hint="port the VM listens on (dockur default = 3389)">
+              <input
+                name="rdpContainerPort"
+                type="number"
+                className="input"
+                placeholder="3389"
+              />
+            </Field>
           </div>
         </details>
 

@@ -41,6 +41,22 @@ async function findUnknownNodeIds(ids: string[]): Promise<string[]> {
   return unique.filter((id) => !knownIds.has(id));
 }
 
+/**
+ * Strip secrets from a template before returning it over the API. The
+ * spec.rdpPassword is the only sensitive field we currently embed in
+ * spec JSON; it's masked the same way platform.ts redacts sshPassword
+ * on Node rows. The orchestrator continues to read the unmasked value
+ * directly from the DB row when provisioning.
+ */
+function redactTemplate<T extends { spec: unknown }>(t: T): T {
+  if (!t || typeof t.spec !== 'object' || t.spec === null) return t;
+  const spec = t.spec as Record<string, unknown>;
+  if (typeof spec.rdpPassword === 'string' && spec.rdpPassword.length > 0) {
+    return { ...t, spec: { ...spec, rdpPassword: '***' } };
+  }
+  return t;
+}
+
 export const templateRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
 
@@ -50,7 +66,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       where: { tenantId: tenant.id },
       orderBy: { name: 'asc' },
     });
-    return { templates };
+    return { templates: templates.map(redactTemplate) };
   });
 
   app.get('/:id', async (req, reply) => {
@@ -63,7 +79,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
       reply.code(404);
       return { error: 'not_found' };
     }
-    return tpl;
+    return redactTemplate(tpl);
   });
 
   app.post('/', async (req, reply) => {
@@ -91,7 +107,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
         allowedNodeIds: Array.from(new Set(allowedNodeIds.filter((s) => s.length > 0))),
       },
     });
-    return created;
+    return redactTemplate(created);
   });
 
   app.patch('/:id', async (req, reply) => {
@@ -116,11 +132,25 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
         return { error: 'unknown_node_ids', unknown };
       }
     }
+    // PATCH bodies that round-trip a previously-redacted template will
+    // contain `rdpPassword: "***"` because that's what the GET returned.
+    // Preserve the stored secret in that case rather than overwriting it
+    // with the mask. Same trick we use for sshPassword on Node rows.
+    let mergedSpec = parsed.data.spec as Record<string, unknown> | undefined;
+    if (mergedSpec && mergedSpec.rdpPassword === '***') {
+      const existingSpec =
+        (existing.spec as Record<string, unknown> | null) ?? {};
+      mergedSpec = {
+        ...mergedSpec,
+        rdpPassword: existingSpec.rdpPassword ?? undefined,
+      };
+    }
+
     const updated = await prisma.labTemplate.update({
       where: { id },
       data: {
         description: parsed.data.description ?? existing.description,
-        spec: parsed.data.spec ?? (existing.spec as object),
+        spec: mergedSpec ?? (existing.spec as object),
         defaultNodeId:
           parsed.data.defaultNodeId === undefined
             ? existing.defaultNodeId
@@ -131,7 +161,7 @@ export const templateRoutes: FastifyPluginAsync = async (app) => {
             : Array.from(new Set(parsed.data.allowedNodeIds.filter((s) => s.length > 0))),
       },
     });
-    return updated;
+    return redactTemplate(updated);
   });
 
   app.delete('/:id', async (req, reply) => {

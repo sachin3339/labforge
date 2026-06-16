@@ -8,6 +8,20 @@ export interface VolumeMount {
 }
 
 /**
+ * Direct host-path bind mount. Used for VM linked-clone overlays where
+ * the qcow2 disk file lives at a known path on the worker node and we
+ * need it mounted at `/storage` inside the dockur container. Distinct
+ * from `VolumeMount` because there is no named volume to create — the
+ * orchestrator/SSH layer prepares the directory contents (qemu-img
+ * create) before this mount is attached.
+ */
+export interface HostBindMount {
+  hostPath: string;
+  containerPath: string;
+  readOnly?: boolean;
+}
+
+/**
  * What the orchestrator hands to a runtime adapter when asking it to bring
  * up a single lab. Runtime-agnostic: docker, k8s, KubeVirt all implement
  * the same surface.
@@ -21,6 +35,16 @@ export interface ProvisionRequest {
   userIdHash?: string;
   /** Persistent volumes to mount. The runtime creates them if missing. */
   volumes?: VolumeMount[];
+  /** Direct host-path binds (orchestrator-prepared, e.g. linked-clone overlays). */
+  bindMounts?: HostBindMount[];
+  /**
+   * Container ports to publish to ephemeral host ports IN ADDITION to
+   * the primary `spec.port`. The runtime returns the assigned host
+   * ports keyed by container port in `ProvisionResult.extraHostPorts`.
+   * Used by VM templates that expose RDP on 3389 alongside the noVNC
+   * web port on 8006.
+   */
+  extraPortBindings?: number[];
   /** Free-form labels for billing/observability. */
   labels: Record<string, string>;
 }
@@ -32,6 +56,12 @@ export interface ProvisionResult {
   /** Host port the lab is published on. Persisted so the proxy can
    *  reconstruct upstream across restarts; optional for non-docker runtimes. */
   hostPort?: number;
+  /**
+   * Map of container-port → host-port for every entry in
+   * `ProvisionRequest.extraPortBindings`. Empty / undefined when the
+   * caller didn't request any extras.
+   */
+  extraHostPorts?: Record<number, number>;
 }
 
 export interface ExecRequest {
@@ -85,10 +115,15 @@ export interface LabRuntime {
    * host port + upstream string. Used after resume/restart to detect when
    * Docker reassigns the ephemeral port. Returns null if the runtime no
    * longer knows about this id (e.g. container removed).
+   *
+   * `allHostPorts` is a map of `<containerPort>/tcp` → host port, with
+   * one entry per published binding. Callers that need a specific
+   * container port (e.g. RDP 3389) read from this map.
    */
   inspectInstance(runtimeId: string): Promise<{
     running: boolean;
     hostPort?: number;
     upstream?: string;
+    allHostPorts?: Record<string, number>;
   } | null>;
 }

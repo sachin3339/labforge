@@ -19,6 +19,12 @@ type TemplateSpec = {
   privileged?: boolean;
   costPerHourUsd?: number;
   priceListUsd?: number;
+  vmGoldenImage?: string;
+  vmOverlaySize?: string;
+  viewer?: 'auto' | 'native-http' | 'novnc' | 'guacamole-rdp';
+  rdpUsername?: string;
+  rdpPassword?: string;
+  rdpContainerPort?: number;
   grader?: unknown;
 };
 
@@ -54,6 +60,17 @@ async function update(templateId: string, formData: FormData) {
   const priceListRaw = String(formData.get('priceListUsd') ?? '').trim();
   const costPerHourUsd = costPerHourRaw ? Number(costPerHourRaw) : undefined;
   const priceListUsd = priceListRaw ? Number(priceListRaw) : undefined;
+  const vmGoldenImage = String(formData.get('vmGoldenImage') ?? '').trim() || undefined;
+  const vmOverlaySize = String(formData.get('vmOverlaySize') ?? '').trim() || undefined;
+  const viewerRaw = String(formData.get('viewer') ?? 'auto').trim();
+  const viewer: 'auto' | 'native-http' | 'novnc' | 'guacamole-rdp' =
+    viewerRaw === 'native-http' || viewerRaw === 'novnc' || viewerRaw === 'guacamole-rdp'
+      ? viewerRaw
+      : 'auto';
+  const rdpUsername = String(formData.get('rdpUsername') ?? '').trim() || undefined;
+  const rdpPassword = String(formData.get('rdpPassword') ?? '').trim() || undefined;
+  const rdpContainerPortRaw = String(formData.get('rdpContainerPort') ?? '').trim();
+  const rdpContainerPort = rdpContainerPortRaw ? Number(rdpContainerPortRaw) : undefined;
   const defaultNodeRaw = String(formData.get('defaultNodeId') ?? '').trim();
   // Empty-string select option means "unpin"; we send explicit null so the
   // server-side patch handler clears the FK instead of leaving it alone.
@@ -108,6 +125,12 @@ async function update(templateId: string, formData: FormData) {
         ...(privileged ? { privileged: true } : {}),
         ...(costPerHourUsd !== undefined ? { costPerHourUsd } : {}),
         ...(priceListUsd !== undefined ? { priceListUsd } : {}),
+        ...(vmGoldenImage ? { vmGoldenImage } : {}),
+        ...(vmOverlaySize ? { vmOverlaySize } : {}),
+        ...(viewer !== 'auto' ? { viewer } : {}),
+        ...(rdpUsername ? { rdpUsername } : {}),
+        ...(rdpPassword ? { rdpPassword } : {}),
+        ...(rdpContainerPort ? { rdpContainerPort } : {}),
         ...(grader ? { grader } : {}),
       },
     }),
@@ -332,6 +355,91 @@ export default async function EditTemplatePage({
                 <span>Run privileged</span>
               </label>
             </div>
+          </div>
+        </details>
+
+        <details
+          className="rounded-md border border-ink-100 bg-ink-50/40 px-4 py-3"
+          open={Boolean(
+            s.vmGoldenImage ||
+              s.rdpUsername ||
+              s.rdpPassword ||
+              (s.viewer && s.viewer !== 'auto'),
+          )}
+        >
+          <summary className="cursor-pointer text-sm font-medium">
+            VM &amp; RDP gateway (Windows / KVM only)
+          </summary>
+          <div className="mt-4 space-y-4">
+            <p className="text-xs text-ink-900/60">
+              Linked-clone golden image + Guacamole HTML5 RDP. Ignored unless
+              lab kind is <span className="font-mono">vm</span>.
+            </p>
+            <Field
+              label="Golden image path on worker node"
+              hint="absolute path to the read-only raw disk"
+            >
+              <input
+                name="vmGoldenImage"
+                className="input font-mono"
+                defaultValue={s.vmGoldenImage ?? ''}
+                placeholder="/opt/labforge/win-golden/golden.img"
+              />
+            </Field>
+            <Field label="Overlay size" hint="qemu-img logical size">
+              <input
+                name="vmOverlaySize"
+                className="input font-mono"
+                defaultValue={s.vmOverlaySize ?? ''}
+                placeholder="64G"
+              />
+            </Field>
+            <Field
+              label="Viewer"
+              hint='"auto" → guacamole-rdp when RDP creds set, else native-http'
+            >
+              <select
+                name="viewer"
+                className="input"
+                defaultValue={s.viewer ?? 'auto'}
+              >
+                <option value="auto">auto (recommended)</option>
+                <option value="native-http">native-http</option>
+                <option value="novnc">novnc</option>
+                <option value="guacamole-rdp">guacamole-rdp</option>
+              </select>
+            </Field>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="RDP username">
+                <input
+                  name="rdpUsername"
+                  className="input font-mono"
+                  defaultValue={s.rdpUsername ?? ''}
+                  placeholder="Docker"
+                />
+              </Field>
+              <Field
+                label="RDP password"
+                hint="leave *** as-is to keep the stored value"
+              >
+                <input
+                  name="rdpPassword"
+                  type="password"
+                  className="input font-mono"
+                  autoComplete="new-password"
+                  defaultValue={s.rdpPassword ?? ''}
+                />
+              </Field>
+            </div>
+            <Field label="RDP container port" hint="port the VM listens on (dockur default = 3389)">
+              <input
+                name="rdpContainerPort"
+                type="number"
+                className="input"
+                defaultValue={s.rdpContainerPort ?? ''}
+                placeholder="3389"
+              />
+            </Field>
           </div>
         </details>
 

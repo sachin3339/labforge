@@ -236,6 +236,51 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'not_found' };
     }
   });
+
+  // ============================================================
+  //   Guacamole gateway — singleton config row used by the
+  //   redeem flow when a template's resolved viewer is
+  //   `guacamole-rdp`.
+  // ============================================================
+
+  // ----- Get singleton -----
+  app.get('/guacamole', async () => {
+    const row = await prisma.guacamoleConfig.findUnique({
+      where: { id: 'singleton' },
+    });
+    return { config: row ? redactGuacamole(row) : null };
+  });
+
+  // ----- Create/update singleton -----
+  app.put('/guacamole', async (req) => {
+    const body = GuacamoleWriteBody.parse(req.body);
+    // Same "empty string = keep stored secret" semantics as nodes.
+    if (typeof body.sshPassword === 'string' && body.sshPassword === '') {
+      delete (body as { sshPassword?: unknown }).sshPassword;
+    }
+    const row = await prisma.guacamoleConfig.upsert({
+      where: { id: 'singleton' },
+      create: { id: 'singleton', ...body },
+      update: body,
+    });
+    return { config: redactGuacamole(row) };
+  });
+
+  // ----- Resync user-mapping.xml on demand -----
+  // Useful when an operator has edited the file out-of-band and wants the
+  // canonical state restored, or after fixing a transient SSH outage.
+  app.post('/guacamole/resync', async (_req, reply) => {
+    // Lazy-import to avoid pulling node-shell deps into routes that
+    // don't need them.
+    const { regenerateUserMapping } = await import('../runtime/guacamole.js');
+    try {
+      const r = await regenerateUserMapping(prisma);
+      return { ok: true, ...r };
+    } catch (err) {
+      reply.code(500);
+      return { ok: false, error: (err as Error).message };
+    }
+  });
 };
 
 /**
@@ -275,4 +320,29 @@ function redactNode<T extends { sshPassword?: string | null }>(node: T): Omit<T,
 /** Hex-encoded 32-byte random key. */
 function generateApiKey(): string {
   return randomBytes(32).toString('hex');
+}
+
+/**
+ * Validator for GET/PUT on the singleton Guacamole config row. All
+ * fields are optional on PUT — operators set up the gateway in stages
+ * (publicUrl + userMappingPath first, SSH later when remote-write).
+ */
+const GuacamoleWriteBody = z.object({
+  publicUrl: z.string().url(),
+  userMappingPath: z.string().min(1),
+  sshHost: z.string().nullable().optional(),
+  sshUser: z.string().nullable().optional(),
+  sshPort: z.number().int().min(1).max(65535).nullable().optional(),
+  sshKeyPath: z.string().nullable().optional(),
+  sshPassword: z.string().nullable().optional(),
+  defaultRdpHost: z.string().nullable().optional(),
+  enabled: z.boolean().default(true),
+});
+
+/** Strip the only true secret before responding. */
+function redactGuacamole<T extends { sshPassword?: string | null }>(
+  row: T,
+): Omit<T, 'sshPassword'> {
+  const { sshPassword: _omit, ...safe } = row;
+  return safe;
 }

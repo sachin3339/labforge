@@ -107,6 +107,56 @@ export const LabTemplateSpec = z.object({
 
   /** Optional auto-grader. Runs inside the lab container on demand. */
   grader: z.optional(z.lazy(() => GraderSpec)),
+
+  // ---- VM-kind extras (linked clones + RDP gateway) ----
+
+  /**
+   * Absolute path on the worker node to a read-only "golden" raw disk
+   * image. When set, the orchestrator creates a per-instance qcow2
+   * overlay backed by this file and mounts the overlay's directory as
+   * `/storage` inside the dockur/windows container, instead of using
+   * the named-volume pattern. This is how Windows VM labs scale: one
+   * 30 GiB golden image + N tiny overlays instead of N 64 GiB volumes.
+   *
+   * Example: '/opt/labforge/win-golden/golden.img'
+   *
+   * Ignored unless `runtime: 'vm'`.
+   */
+  vmGoldenImage: z.string().optional(),
+  /**
+   * Logical size of the per-instance qcow2 overlay (passed to
+   * `qemu-img create`). Must be >= the golden image's virtual size.
+   * Example: '64G'. Ignored unless `vmGoldenImage` is set.
+   */
+  vmOverlaySize: z.string().default('64G'),
+  /**
+   * Base directory on the worker node where per-instance overlay
+   * directories are created (`<base>/<instanceId>/disk.img`). The
+   * directory is bind-mounted into the container at `/storage`.
+   */
+  vmStorageHostBase: z.string().default('/opt/labforge/instances'),
+
+  /**
+   * Which client the redeem flow should hand the student. `auto` lets
+   * the control-plane pick based on runtime: vm-kind with rdpUsername
+   * set → guacamole-rdp; everything else → native-http (the existing
+   * subdomain-proxy path). `novnc` keeps the legacy in-container
+   * noVNC viewer (dockur :8006) for debugging.
+   */
+  viewer: z.enum(['auto', 'native-http', 'novnc', 'guacamole-rdp']).default('auto'),
+  /**
+   * RDP username inside the VM. For dockur/windows the default account
+   * is `Docker`. Required when `viewer = 'guacamole-rdp'`.
+   */
+  rdpUsername: z.string().optional(),
+  /**
+   * RDP password inside the VM. Stored in the spec JSON for now; rotate
+   * by editing the template. Treat as a secret — never logged, redacted
+   * in admin API responses (handled in routes/templates.ts).
+   */
+  rdpPassword: z.string().optional(),
+  /** RDP port the VM listens on inside the container. Default 3389 (dockur). */
+  rdpContainerPort: z.number().int().positive().default(3389),
 });
 export type LabTemplateSpec = z.infer<typeof LabTemplateSpec>;
 
