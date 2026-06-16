@@ -45,8 +45,12 @@ async function main() {
     create: { name: tenantName, apiKey, role: 'platform' },
   });
 
-  // Platform tenant always tracks the latest catalog spec.
-  await provisionDefaultCatalog(prisma, tenant.id, 'upsert');
+  // Platform tenant: only insert templates that don't exist yet. Using
+  // 'upsert' here would clobber operator customisations (golden-image
+  // paths, RDP credentials, prewarm counts, custom graders) on every
+  // container restart. Catalog updates ship via the admin UI, not the
+  // seed.
+  await provisionDefaultCatalog(prisma, tenant.id, 'create-only');
 
   // eslint-disable-next-line no-console
   console.log(`Seeded tenant "${tenant.name}" (apiKey=${apiKey})`);
