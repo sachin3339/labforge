@@ -100,12 +100,16 @@ services:
       #      reads ~/.guacamole/user-mapping.xml at every login (it polls
       #      mtime, so live edits to the file it points to ARE picked up).
       #
-      # Trick: after start.sh finishes the wipe+copy, replace the copied
-      # user-mapping.xml with a SYMLINK to the bind-mount of the live
-      # host file. We do this in a background poller that waits for
-      # start.sh to finish its setup phase (signalled by guacamole.properties
-      # appearing in ~/.guacamole) and then runs `ln -sf`. The login attempt
-      # comes well after Tomcat startup, so the tiny race is irrelevant.
+      # Trick: after start.sh finishes setup, replace the copied
+      # user-mapping.xml with a SYMLINK that points INTO the directory
+      # bind-mount /etc/guacamole. We deliberately use the DIRECTORY mount
+      # (not a single-file mount) because control-plane does atomic
+      # writes (tempfile + rename), which creates a fresh inode each
+      # time. Single-file bind-mounts are pinned to the inode that
+      # existed at container start, so the container would never see
+      # the new file. Directory mounts re-resolve the inode on every
+      # open(), so the symlink-via-directory walk picks up the live
+      # file every time.
       GUACAMOLE_HOME: /etc/guacamole
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
@@ -116,9 +120,9 @@ services:
         (
           for i in $$(seq 1 120); do
             if [ -f /home/guacamole/.guacamole/guacamole.properties ]; then
-              ln -sf /run/labforge/user-mapping.xml \
+              ln -sf /etc/guacamole/user-mapping.xml \
                      /home/guacamole/.guacamole/user-mapping.xml
-              echo "[labforge] linked user-mapping.xml -> /run/labforge/user-mapping.xml"
+              echo "[labforge] linked user-mapping.xml -> /etc/guacamole/user-mapping.xml (live, inode-stable)"
               break
             fi
             sleep 0.5
@@ -126,11 +130,11 @@ services:
         ) &
         exec /opt/guacamole/bin/start.sh
     volumes:
-      # Template dir — read-only. Auth provider does NOT read from here;
-      # start.sh's `cp -a` copies its contents into ~/.guacamole at boot.
+      # Directory mount. Used by start.sh as the GUACAMOLE_HOME template
+      # AND as the live source for the symlinked user-mapping.xml. Must
+      # be a directory mount (not single-file) so atomic-rename writes
+      # by the control-plane are visible.
       - ./guacamole:/etc/guacamole:ro
-      # The live user-mapping.xml. Symlinked into ~/.guacamole at boot.
-      - ./guacamole/user-mapping.xml:/run/labforge/user-mapping.xml:ro
     networks:
       - default
 
