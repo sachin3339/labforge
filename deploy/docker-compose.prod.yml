@@ -93,11 +93,14 @@ services:
     environment:
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
-      GUACAMOLE_HOME: /etc/guacamole
     volumes:
-      - ./guacamole:/etc/guacamole:ro
-    # Reach worker nodes via their public IP (Node.proxyHost), so no
-    # extra_hosts trickery needed.
+      # Guacamole 1.5.x's entrypoint hardcodes ~guacamole/.guacamole as
+      # GUACAMOLE_HOME (the GUACAMOLE_HOME env var is ignored by the
+      # tomcat container's startup script). Mount our config dir there.
+      # The control-plane mounts the SAME host directory at /etc/guacamole
+      # (rw) and writes user-mapping.xml; Guacamole re-reads on every
+      # login so no restart is required after provision/destroy.
+      - ./guacamole:/home/guacamole/.guacamole:ro
     networks:
       - default
 

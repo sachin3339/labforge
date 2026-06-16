@@ -172,7 +172,11 @@ export function renderUserMappingXml(rows: RenderRow[], gconf: GuacamoleConfig):
 async function writeUserMappingLocal(path: string, body: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.${randToken(6)}.tmp`;
-  await writeFile(tmp, body, { mode: 0o640 });
+  // 0o644 (world-readable) is required: the guacamole container runs as
+  // uid 1000 (`guacamole` user) and reads this file via a bind mount,
+  // while the control-plane writes it as root. Without world read the
+  // tomcat process cannot load the user-mapping and crash-loops.
+  await writeFile(tmp, body, { mode: 0o644 });
   await rename(tmp, path);
 }
 
@@ -209,6 +213,7 @@ async function writeUserMappingRemote(
   };
   // Stage to a tmp file then atomic rename. base64-encode the body so
   // single quotes / newlines inside the XML can't terminate the heredoc.
+  // Mode 0644 — see writeUserMappingLocal for rationale.
   const b64 = Buffer.from(body, 'utf8').toString('base64');
   const tmp = `${gconf.userMappingPath}.${randToken(6)}.tmp`;
   // shell-quote the paths
@@ -216,7 +221,7 @@ async function writeUserMappingRemote(
   const cmd = [
     `mkdir -p ${q(dirname(gconf.userMappingPath))}`,
     `printf %s ${q(b64)} | base64 -d > ${q(tmp)}`,
-    `chmod 640 ${q(tmp)}`,
+    `chmod 644 ${q(tmp)}`,
     `mv ${q(tmp)} ${q(gconf.userMappingPath)}`,
   ].join(' && ');
   const res = await nodeExec(fakeNode, cmd);
