@@ -91,25 +91,46 @@ services:
     depends_on:
       - guacd
     environment:
-      # The official start.sh does `cp -a $GUACAMOLE_HOME/. ~/.guacamole/`
-      # at boot. The auth provider then reads ~/.guacamole/user-mapping.xml
-      # at runtime — that path is hardcoded in BasicFileAuthenticationProvider.
+      # The official start.sh has two non-negotiable side effects at boot:
+      #   1. `rm -Rf ~/.guacamole` (line 1045) — blows away the runtime
+      #      config dir. ANY bind-mount underneath this path causes EACCES
+      #      and an infinite restart loop, so we must NOT mount there.
+      #   2. `cp -a $GUACAMOLE_HOME/. ~/.guacamole/` — copies our template
+      #      into the freshly-wiped runtime dir. The auth provider then
+      #      reads ~/.guacamole/user-mapping.xml at every login (it polls
+      #      mtime, so live edits to the file it points to ARE picked up).
       #
-      # We use TWO single-file bind-mounts to thread the needle:
-      #   1. /etc/guacamole/guacamole.properties — the template; this is
-      #      what the boot-time `cp -a` reads. We deliberately do NOT
-      #      mount user-mapping.xml here, so cp doesn't try to clobber
-      #      a destination bind-mount (which would fail with EACCES).
-      #   2. /home/guacamole/.guacamole/user-mapping.xml — the LIVE file.
-      #      Mounted directly at the auth provider's read path. The
-      #      provider polls mtime, so control-plane edits to the host
-      #      file flow through with no restart.
+      # Trick: after start.sh finishes the wipe+copy, replace the copied
+      # user-mapping.xml with a SYMLINK to the bind-mount of the live
+      # host file. We do this in a background poller that waits for
+      # start.sh to finish its setup phase (signalled by guacamole.properties
+      # appearing in ~/.guacamole) and then runs `ln -sf`. The login attempt
+      # comes well after Tomcat startup, so the tiny race is irrelevant.
       GUACAMOLE_HOME: /etc/guacamole
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        (
+          for i in $$(seq 1 120); do
+            if [ -f /home/guacamole/.guacamole/guacamole.properties ]; then
+              ln -sf /run/labforge/user-mapping.xml \
+                     /home/guacamole/.guacamole/user-mapping.xml
+              echo "[labforge] linked user-mapping.xml -> /run/labforge/user-mapping.xml"
+              break
+            fi
+            sleep 0.5
+          done
+        ) &
+        exec /opt/guacamole/bin/start.sh
     volumes:
-      - ./guacamole/guacamole.properties:/etc/guacamole/guacamole.properties:ro
-      - ./guacamole/user-mapping.xml:/home/guacamole/.guacamole/user-mapping.xml:ro
+      # Template dir — read-only. Auth provider does NOT read from here;
+      # start.sh's `cp -a` copies its contents into ~/.guacamole at boot.
+      - ./guacamole:/etc/guacamole:ro
+      # The live user-mapping.xml. Symlinked into ~/.guacamole at boot.
+      - ./guacamole/user-mapping.xml:/run/labforge/user-mapping.xml:ro
     networks:
       - default
 
