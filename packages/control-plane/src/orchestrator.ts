@@ -407,7 +407,9 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
         overlaySize: spec.vmOverlaySize,
       });
       // Two bind mounts:
-      //   1. The overlay dir at /storage — dockur reads /storage/data.img.
+      //   1. The overlay dir at /storage — dockur reads /storage/data.qcow2
+      //      (the `.qcow2` extension triggers DISK_FMT=qcow2 auto-detection
+      //      in dockur's disk.sh; see nodeShell.ts qemuImgCreateOverlay).
       //   2. The golden image at its OWN absolute host path read-only —
       //      qcow2 stores the absolute backing-file path inside the
       //      overlay header, and qemu resolves that path INSIDE the

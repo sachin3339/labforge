@@ -153,18 +153,26 @@ function shQuote(s: string): string {
 
 /**
  * Create a per-instance qcow2 overlay backed by a read-only raw golden
- * image. The overlay file lands at `<dir>/data.img` so the dockur
- * container's expected `/storage/data.img` works after a bind mount of
+ * image. The overlay file lands at `<dir>/data.qcow2` so the dockur
+ * container's `/storage/data.qcow2` works after a bind mount of
  * `<dir>:/storage`.
  *
- * Also seeds the per-instance dir with dockur's "install completed"
- * marker files (windows.ver, windows.base, windows.mac, windows.mode)
- * and the UEFI NVRAM/TPM state files (windows_secure.{rom,tpm,vars})
- * by copying them out of the golden's parent directory. Without this,
- * dockur sees a "fresh" /storage and runs the Windows installer again,
- * wiping the overlay before boot.
+ * The `.qcow2` extension is load-bearing: dockur's `src/disk.sh`
+ * (qemus/qemu base image) auto-detects `DISK_FMT` from the filename
+ * extension and uses `qemu-img info` for qcow2 sizing. A `.img` file
+ * is treated as raw, measured with `stat -c%s` (returns ~193 KB for
+ * a fresh overlay), and then blindly `truncate`-d up to DISK_SIZE,
+ * which obliterates the qcow2 header and produces "No bootable
+ * option or device was found" at UEFI.
  *
- * Idempotent: if the dir already exists with a data.img, this is a
+ * Also seeds the per-instance dir with dockur's "install completed"
+ * marker files (windows.ver, windows.base, windows.mac, windows.mode,
+ * windows.boot) and the UEFI NVRAM/TPM state files
+ * (windows_secure.{rom,tpm,vars}) by copying them out of the golden's
+ * parent directory. Without this, dockur sees a "fresh" /storage and
+ * runs the Windows installer again, wiping the overlay before boot.
+ *
+ * Idempotent: if the dir already exists with a data.qcow2, this is a
  * no-op (qemu-img would refuse to overwrite, which is what we want
  * for resume-after-crash semantics). The marker copy is also
  * idempotent — files already present are not overwritten.
@@ -178,7 +186,7 @@ export async function qemuImgCreateOverlay(
   },
 ): Promise<void> {
   const { overlayDir, goldenImagePath, overlaySize } = opts;
-  const dataPath = `${overlayDir}/data.img`;
+  const dataPath = `${overlayDir}/data.qcow2`;
   // dockur's marker + nvram files. Sourced from the golden's parent dir
   // (same place where the operator put `golden.img` after the bootstrap
   // builder finished). Per-instance copies — TPM/NVRAM state diverges

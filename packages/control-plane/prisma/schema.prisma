@@ -138,7 +138,7 @@ model LabInstance {
   /// is re-mounted every time this (userIdHash, templateId) is re-provisioned.
   volumeName  String?
   /// Worker-host directory holding this instance's qcow2 overlay
-  /// (`<dir>/data.img`), bind-mounted into the container at `/storage`.
+  /// (`<dir>/data.qcow2`), bind-mounted into the container at `/storage`.
   /// Set only when the template's spec has `vmGoldenImage`. Used by
   /// destroy() to clean the overlay up; null on legacy / non-VM rows.
   vmOverlayPath String?
