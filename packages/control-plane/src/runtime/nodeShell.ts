@@ -157,9 +157,17 @@ function shQuote(s: string): string {
  * container's expected `/storage/data.img` works after a bind mount of
  * `<dir>:/storage`.
  *
+ * Also seeds the per-instance dir with dockur's "install completed"
+ * marker files (windows.ver, windows.base, windows.mac, windows.mode)
+ * and the UEFI NVRAM/TPM state files (windows_secure.{rom,tpm,vars})
+ * by copying them out of the golden's parent directory. Without this,
+ * dockur sees a "fresh" /storage and runs the Windows installer again,
+ * wiping the overlay before boot.
+ *
  * Idempotent: if the dir already exists with a data.img, this is a
  * no-op (qemu-img would refuse to overwrite, which is what we want
- * for resume-after-crash semantics).
+ * for resume-after-crash semantics). The marker copy is also
+ * idempotent — files already present are not overwritten.
  */
 export async function qemuImgCreateOverlay(
   node: Node | null,
@@ -171,16 +179,37 @@ export async function qemuImgCreateOverlay(
 ): Promise<void> {
   const { overlayDir, goldenImagePath, overlaySize } = opts;
   const dataPath = `${overlayDir}/data.img`;
+  // dockur's marker + nvram files. Sourced from the golden's parent dir
+  // (same place where the operator put `golden.img` after the bootstrap
+  // builder finished). Per-instance copies — TPM/NVRAM state diverges
+  // between instances at runtime, so each overlay needs its own.
+  const seedFiles = [
+    'windows.ver',
+    'windows.base',
+    'windows.mac',
+    'windows.mode',
+    'windows_secure.rom',
+    'windows_secure.tpm',
+    'windows_secure.vars',
+  ];
+  const seedShellList = seedFiles.map((f) => shQuote(f)).join(' ');
   const cmd = [
     `mkdir -p ${shQuote(overlayDir)}`,
     `if [ ! -f ${shQuote(dataPath)} ]; then`,
     `  qemu-img create -f qcow2 -F raw -b ${shQuote(goldenImagePath)} -o backing_fmt=raw ${shQuote(dataPath)} ${shQuote(overlaySize)}`,
     `fi`,
-  ].join(' && ').replace(' && fi', '; fi');
+    `goldenDir=$(dirname ${shQuote(goldenImagePath)})`,
+    `for f in ${seedShellList}; do`,
+    `  if [ -f "$goldenDir/$f" ] && [ ! -f ${shQuote(overlayDir)}/"$f" ]; then`,
+    `    cp -- "$goldenDir/$f" ${shQuote(overlayDir)}/`,
+    `  fi`,
+    `done`,
+    `true`,
+  ].join('\n');
   const res = await nodeExec(node, cmd);
   if (res.exitCode !== 0) {
     throw new Error(
-      `qemu-img create failed on node ${node?.name ?? 'local'}: ` +
+      `qemu-img create / seed failed on node ${node?.name ?? 'local'}: ` +
         `code=${res.exitCode} stderr=${res.stderr.trim().slice(0, 400)}`,
     );
   }
