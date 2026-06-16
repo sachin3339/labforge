@@ -264,13 +264,47 @@ export async function loadGuacamoleConfig(
 }
 
 /**
+ * In-process serialisation for regenerateUserMapping. Without this, two
+ * concurrent provision-success callbacks both:
+ *   1. read DB snapshot,
+ *   2. render XML,
+ *   3. atomic-rename onto the file.
+ * The atomic rename only protects against partial reads — it does NOT
+ * protect against an *earlier-snapshot* writer winning the rename race
+ * after a *later-snapshot* writer. The result is a stale user-mapping
+ * missing entries for the newest ready instances. We saw this live with
+ * 5 simultaneous launches → 3 entries on disk.
+ *
+ * The mutex coalesces overlapping calls: each new caller waits on the
+ * in-flight chain, so by the time it runs its DB read it sees every
+ * commit that happened before it started waiting. Cheap, in-process,
+ * good enough for a single control-plane node. (For HA we'd swap this
+ * for a Postgres advisory lock keyed on guacamole_singleton.)
+ */
+let regenChain: Promise<unknown> = Promise.resolve();
+
+/**
  * Re-render and ship the entire user-mapping.xml. Call after any state
  * change that affects what should be in the file (provision success,
  * destroy, manual cred rotation). No-op when GuacamoleConfig is missing
  * or disabled — operators can keep the rest of the platform running
  * while they finish wiring the gateway.
+ *
+ * Concurrent calls are serialised in-process (see regenChain above) so
+ * the latest committer always wins the file.
  */
 export async function regenerateUserMapping(
+  prisma: PrismaClient,
+): Promise<{ rendered: number; written: boolean }> {
+  const next = regenChain.then(() => regenerateUserMappingInner(prisma));
+  // Don't propagate failures along the chain — each caller awaits its
+  // own result, but the chain itself must keep going so a transient SSH
+  // hiccup doesn't poison every subsequent regen.
+  regenChain = next.catch(() => undefined);
+  return next;
+}
+
+async function regenerateUserMappingInner(
   prisma: PrismaClient,
 ): Promise<{ rendered: number; written: boolean }> {
   const gconf = await loadGuacamoleConfig(prisma);

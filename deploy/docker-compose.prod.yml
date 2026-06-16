@@ -117,15 +117,22 @@ services:
       - /bin/bash
       - -c
       - |
+        # Background symlink installer. Polls forever (no early-exit
+        # timeout) because the previous 60s budget raced on cold starts
+        # — start.sh can take longer than that to wipe ~/.guacamole and
+        # populate guacamole.properties under load. Once the runtime
+        # dir exists we install the symlink and re-install it on a
+        # short cadence so a future start.sh re-run can't shadow it
+        # with a regular file copy. The control-plane is the single
+        # writer of /etc/guacamole/user-mapping.xml; the symlink keeps
+        # Guacamole's mtime poll pointed at the live file forever.
         (
-          for i in $$(seq 1 120); do
-            if [ -f /home/guacamole/.guacamole/guacamole.properties ]; then
-              ln -sf /etc/guacamole/user-mapping.xml \
-                     /home/guacamole/.guacamole/user-mapping.xml
-              echo "[labforge] linked user-mapping.xml -> /etc/guacamole/user-mapping.xml (live, inode-stable)"
-              break
+          while true; do
+            if [ -d /home/guacamole/.guacamole ]; then
+              ln -sfn /etc/guacamole/user-mapping.xml \
+                      /home/guacamole/.guacamole/user-mapping.xml
             fi
-            sleep 0.5
+            sleep 5
           done
         ) &
         exec /opt/guacamole/bin/start.sh
