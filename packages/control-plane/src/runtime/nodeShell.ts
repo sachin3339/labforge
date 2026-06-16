@@ -188,6 +188,7 @@ export async function qemuImgCreateOverlay(
     'windows.base',
     'windows.mac',
     'windows.mode',
+    'windows.boot',
     'windows_secure.rom',
     'windows_secure.tpm',
     'windows_secure.vars',
