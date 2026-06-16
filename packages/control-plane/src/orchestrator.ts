@@ -467,15 +467,16 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
     // 3389 host port published the moment QEMU starts (BIOS phase, no
     // OS yet) so a TCP connect succeeds but Guacamole gets "Server
     // refused connection (wrong security type?)" because no RDP server
-    // is listening yet — Windows is still booting. We saw this happen
-    // 100% of the time with cold-start launches in the smoke test.
+    // is listening yet — Windows is still booting.
     //
     // Probe runs on the worker node so we hit 127.0.0.1:<rdpHostPort>
-    // and avoid traversing the public internet on every poll. Generous
-    // 4-minute timeout because cold Windows boot from golden can take
-    // 60-180s under contention.
+    // and avoid traversing the public internet on every poll. 6-minute
+    // budget chosen empirically: a fresh Windows boot from the golden
+    // overlay takes ~90s on idle, ~180s under contention, and we leave
+    // headroom for OOBE / first-login work the SetupType=2 cmd does
+    // before Services\TermService starts listening.
     if (resolvedViewer === 'guacamole-rdp' && rdpHostPort) {
-      await waitForRdpReady(node, '127.0.0.1', rdpHostPort, 240_000);
+      await waitForRdpReady(node, '127.0.0.1', rdpHostPort, 360_000);
     }
 
     const updated = await prisma.labInstance.update({
@@ -517,6 +518,28 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
     }
     return updated;
   } catch (err) {
+    // Probe failure (or any post-runtime-start failure) leaves a half-baked
+    // container running on the worker node. If we leave it there, the host
+    // port stays bound, the qcow2 overlay holds disk space, and the user's
+    // next launch hits the same stale row via REUSABLE_STATUSES until the
+    // reaper sweeps. Best-effort: ask the runtime to tear it down. We don't
+    // re-throw the destroy error \u2014 the original provision error is the one
+    // worth surfacing.
+    try {
+      const failingRuntime = node ? await getNodeRuntime(node) : getRuntime();
+      const cur = await prisma.labInstance.findUnique({ where: { id: instance.id } });
+      if (cur?.runtimeId) {
+        await failingRuntime.destroy(cur.runtimeId);
+      }
+      if (cur?.vmOverlayPath) {
+        await rmOverlayDir(node, cur.vmOverlayPath);
+      }
+    } catch (cleanupErr) {
+      console.warn(
+        `[orchestrator] cleanup after provision failure for ${instance.id} failed: ` +
+          (cleanupErr as Error).message,
+      );
+    }
     await prisma.labInstance.update({
       where: { id: instance.id },
       data: { status: 'failed' },
