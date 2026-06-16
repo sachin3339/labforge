@@ -9,6 +9,7 @@ import { getNodeRuntime, resolveNodeForProvision } from './runtime/nodes.js';
 import {
   qemuImgCreateOverlay,
   rmOverlayDir,
+  waitForRdpReady,
 } from './runtime/nodeShell.js';
 import {
   clearGuacamoleCredentials,
@@ -460,6 +461,22 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
       resolvedViewer === 'guacamole-rdp'
         ? extraHostPorts?.[spec.rdpContainerPort] ?? null
         : null;
+
+    // Block on real RDP readiness (X.224 negotiation reply) before the
+    // row goes to 'ready'. Without this, the dockur container has its
+    // 3389 host port published the moment QEMU starts (BIOS phase, no
+    // OS yet) so a TCP connect succeeds but Guacamole gets "Server
+    // refused connection (wrong security type?)" because no RDP server
+    // is listening yet — Windows is still booting. We saw this happen
+    // 100% of the time with cold-start launches in the smoke test.
+    //
+    // Probe runs on the worker node so we hit 127.0.0.1:<rdpHostPort>
+    // and avoid traversing the public internet on every poll. Generous
+    // 4-minute timeout because cold Windows boot from golden can take
+    // 60-180s under contention.
+    if (resolvedViewer === 'guacamole-rdp' && rdpHostPort) {
+      await waitForRdpReady(node, '127.0.0.1', rdpHostPort, 240_000);
+    }
 
     const updated = await prisma.labInstance.update({
       where: { id: instance.id },

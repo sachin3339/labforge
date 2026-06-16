@@ -246,3 +246,71 @@ export async function rmOverlayDir(
     );
   }
 }
+
+/**
+ * Wait until the dockur Windows VM at `host:port` is actually serving
+ * RDP — not just TCP-accepting. dockur publishes the host port the
+ * moment QEMU starts (BIOS phase, long before Windows boots), so a
+ * naive TCP connect always succeeds and Guacamole then fails with
+ * "wrong security type" when there's no RDP server on the other end
+ * yet. We send a real X.224 Connection Request (RDP negotiation
+ * packet) and wait for the server's Connection Confirm reply. Only a
+ * live Windows RDP stack will respond.
+ *
+ * Probe runs on the node hosting the VM so it doesn't traverse the
+ * public internet; for `local` nodes this is just the control-plane
+ * host. Times out after `timeoutMs`; throws to fail the provision so
+ * the LabInstance row goes to `failed` instead of stuck `ready`.
+ *
+ * X.224 / RDP packet (TPKT + COTP + RDP_NEG_REQ, 19 bytes):
+ *   03 00 00 13   TPKT version=3, length=19
+ *   0e e0 00 00 00 00 00   COTP CR TPDU (dst-ref/src-ref/class=0)
+ *   01 00 08 00 0b 00 00 00   RDP_NEG_REQ flags=0, length=8,
+ *                              requestedProtocols=PROTOCOL_SSL|HYBRID
+ * Any non-empty reply from the server proves Windows RDP is up.
+ */
+export async function waitForRdpReady(
+  node: Node | null,
+  host: string,
+  port: number,
+  timeoutMs = 240_000,
+): Promise<void> {
+  // Heredoc-fed Python one-liner. We pick Python because it's on every
+  // dockur-capable Ubuntu host we run, and it gives us per-attempt
+  // timeouts + read deadlines without shelling out to nc/ncat which
+  // varies across distros (BSD nc has no -w on Linux, etc.).
+  const pyScript = `
+import socket, sys, time
+host=sys.argv[1]; port=int(sys.argv[2]); deadline=time.time()+${Math.floor(timeoutMs / 1000)}
+# X.224 Connection Request with RDP_NEG_REQ
+pkt=bytes.fromhex("030000130ee00000000000010008000b000000")
+last=""
+while time.time()<deadline:
+  try:
+    s=socket.create_connection((host,port),timeout=3)
+    s.settimeout(3)
+    s.sendall(pkt)
+    data=s.recv(64)
+    s.close()
+    if data:
+      sys.stdout.write("ok len="+str(len(data))+"\\n"); sys.exit(0)
+    last="empty"
+  except Exception as e:
+    last=str(e)[:80]
+  time.sleep(2)
+sys.stderr.write("timeout last="+last+"\\n"); sys.exit(1)
+`;
+  // base64-encode so heredoc-special chars in the script don't break
+  // the SSH wrapper / sh -c parsing.
+  const b64 = Buffer.from(pyScript, 'utf8').toString('base64');
+  const cmd = `echo ${shQuote(b64)} | base64 -d | python3 - ${shQuote(host)} ${String(port)}`;
+  const started = Date.now();
+  const res = await nodeExec(node, cmd);
+  const elapsed = Math.round((Date.now() - started) / 1000);
+  if (res.exitCode !== 0) {
+    throw new Error(
+      `RDP readiness probe ${host}:${port} failed after ${elapsed}s on node ` +
+        `${node?.name ?? 'local'}: ${res.stderr.trim().slice(0, 300) || res.stdout.trim().slice(0, 300)}`,
+    );
+  }
+}
