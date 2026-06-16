@@ -90,29 +90,22 @@ services:
     restart: unless-stopped
     depends_on:
       - guacd
-    # Run as the bundled `guacamole` user (uid 1001) so we can write to
-    # the bind-mounted config dir. Required because the file is owned
-    # root on the host (control-plane writes it as root).
-    user: "1001:1001"
     environment:
-      # The default start.sh entrypoint aggressively `rm`s the config
-      # files and regenerates them from env vars on every boot, which
-      # nukes our user-mapping.xml. We bypass that script and start
-      # Tomcat directly, since the file-based auth provider
-      # (BasicFileAuthenticationProvider) is built into the WAR and
-      # needs no special bootstrap. CATALINA_HOME must be exported here
-      # for the Tomcat scripts.
-      CATALINA_HOME: /usr/local/tomcat
-      GUACAMOLE_HOME: /home/guacamole/.guacamole
+      # Treat our host config as a TEMPLATE. The official start.sh
+      # (which we keep, because it also deploys guacamole.war into
+      # Tomcat's webapps dir) does `cp -a $GUACAMOLE_HOME/. ~/.guacamole/`
+      # at boot, so the runtime read path is /home/guacamole/.guacamole.
+      # We point BasicFileAuthenticationProvider back at /etc/guacamole
+      # via the `basic-user-mapping` property in guacamole.properties so
+      # that control-plane's live edits to user-mapping.xml are picked up
+      # automatically (the provider re-reads on mtime change).
+      GUACAMOLE_HOME: /etc/guacamole
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
-    entrypoint: ["/usr/local/tomcat/bin/catalina.sh", "run"]
     volumes:
-      # Same host directory as control-plane mounts at /etc/guacamole.
-      # Tomcat reads guacamole.properties + user-mapping.xml from
-      # GUACAMOLE_HOME on every login, so the control-plane's writes
-      # take effect with no service restart.
-      - ./guacamole:/home/guacamole/.guacamole:rw
+      # Read-only is enough — the entrypoint only reads from here, and
+      # control-plane writes to the host path directly.
+      - ./guacamole:/etc/guacamole:ro
     networks:
       - default
 
