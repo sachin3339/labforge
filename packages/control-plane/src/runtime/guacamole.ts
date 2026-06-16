@@ -120,7 +120,7 @@ function escapeXmlAttr(s: string): string {
  *         <param name="port">…</param>
  *         <param name="username">Docker</param>
  *         <param name="password">…</param>
- *         <param name="security">nla</param>
+ *         <param name="security">any</param>
  *         <param name="ignore-cert">true</param>
  *       </connection>
  *     </authorize>
@@ -155,7 +155,12 @@ export function renderUserMappingXml(rows: RenderRow[], gconf: GuacamoleConfig):
     if (r.spec.rdpPassword) {
       lines.push(`      <param name="password">${escapeXmlAttr(r.spec.rdpPassword)}</param>`);
     }
-    lines.push('      <param name="security">nla</param>');
+    // 'any' lets guacd negotiate (NLA → TLS → RDP) so it works across
+    // dockur/windows builds that vary in supported security layers.
+    // Forcing 'nla' was rejected by Win11 builds we tested ("wrong
+    // security type?"). 'any' is what Guacamole's own docs recommend
+    // when the back-end RDP stack isn't fully under your control.
+    lines.push('      <param name="security">any</param>');
     lines.push('      <param name="ignore-cert">true</param>');
     lines.push('      <param name="resize-method">display-update</param>');
     lines.push('      <param name="enable-wallpaper">false</param>');
