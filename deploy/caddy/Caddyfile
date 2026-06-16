@@ -40,3 +40,19 @@ api.environments.learnlytica.com {
         flush_interval -1
     }
 }
+
+# ---- Guacamole RDP gateway (HTML5 RDP client) ----
+# DNS prerequisite (Cloudflare, grey-cloud / proxied=OFF):
+#   A   rdp.environments         148.113.1.66
+# The redeem flow auto-logs the student in via ?username=&password=
+# query-auth and lands them on a single connection wired to their lab.
+rdp.environments.learnlytica.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+    # Guacamole speaks WebSocket for the framebuffer; flush_interval -1
+    # disables Caddy's response buffering so frames stream live.
+    reverse_proxy guacamole:8080 {
+        flush_interval -1
+    }
+}

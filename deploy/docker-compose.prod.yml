@@ -71,6 +71,36 @@ services:
       timeout: 3s
       retries: 10
 
+  # Apache Guacamole RDP gateway. Two-container layout per upstream's
+  # recommended deploy:
+  #   guacd        — the protocol daemon (RDP/VNC/SSH) on tcp/4822
+  #   guacamole    — the HTML5 client web app on tcp/8080
+  # The control-plane writes user-mapping.xml into ./guacamole/, which is
+  # bind-mounted at /etc/guacamole inside the guacamole container. File
+  # auth re-reads on every login, so no service restart is needed when
+  # connections are added/removed.
+  guacd:
+    image: guacamole/guacd:1.5.5
+    restart: unless-stopped
+    networks:
+      - default
+
+  guacamole:
+    image: guacamole/guacamole:1.5.5
+    restart: unless-stopped
+    depends_on:
+      - guacd
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: '4822'
+      GUACAMOLE_HOME: /etc/guacamole
+    volumes:
+      - ./guacamole:/etc/guacamole:ro
+    # Reach worker nodes via their public IP (Node.proxyHost), so no
+    # extra_hosts trickery needed.
+    networks:
+      - default
+
   control-plane:
     build:
       context: ..
@@ -120,6 +150,11 @@ services:
       # Generate once on the primary with:
       #   ssh-keygen -t ed25519 -f deploy/secrets/nodes_id_ed25519 -N ""
       - ./secrets/nodes_id_ed25519:/root/.ssh/nodes_id_ed25519:ro
+      # Shared with the guacamole container; control-plane writes
+      # user-mapping.xml here on every guacamole-rdp instance lifecycle
+      # change. Same on-disk path on both sides keeps GuacamoleConfig.
+      # userMappingPath simple.
+      - ./guacamole:/etc/guacamole:rw
     networks:
       - default
       - labnet
