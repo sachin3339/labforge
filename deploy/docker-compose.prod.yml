@@ -90,7 +90,7 @@ services:
       JWT_PRIVATE_KEY_B64: ${JWT_PRIVATE_KEY_B64}
       JWT_PUBLIC_KEY_B64: ${JWT_PUBLIC_KEY_B64}
       JWT_ISSUER: ${JWT_ISSUER:-labforge}
-      JWT_LAUNCH_TTL_SECONDS: 60
+      JWT_LAUNCH_TTL_SECONDS: ${JWT_LAUNCH_TTL_SECONDS:-60}
       JWT_SESSION_TTL_SECONDS: 14400
       # Public addressing — must match the Cloudflare DNS records above.
       PUBLIC_API_URL: https://api.environments.learnlytica.com
