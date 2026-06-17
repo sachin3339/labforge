@@ -54,6 +54,7 @@ async function syncInstanceUpstream(
     rdpHostPort: number | null;
   },
   runtime: LabRuntime,
+  primaryContainerPort?: number,
   rdpContainerPort?: number,
 ): Promise<{
   hostPort: number | null;
@@ -78,6 +79,26 @@ async function syncInstanceUpstream(
         rdpDrifted: false,
       };
     }
+    // Re-detect the primary published host port using the template's
+    // declared spec.port. With multi-port labs (e.g. vm: 8006 + 3389),
+    // blindly taking the "first" published port can swap upstream to RDP.
+    const withPort = (u: string | null | undefined, port: number): string | null => {
+      if (!u) return null;
+      const i = u.lastIndexOf(':');
+      if (i <= 0) return null;
+      return `${u.slice(0, i)}:${port}`;
+    };
+    const primaryFromMap =
+      primaryContainerPort && info.allHostPorts
+        ? info.allHostPorts[`${primaryContainerPort}/tcp`]
+        : undefined;
+    const nextHostPort =
+      primaryFromMap ?? (info.hostPort != null ? info.hostPort : inst.hostPort);
+    const nextUpstream =
+      nextHostPort != null
+        ? withPort(info.upstream ?? inst.upstream, nextHostPort) ?? info.upstream ?? inst.upstream
+        : inst.upstream;
+
     // Re-detect the RDP host port for guacamole-rdp instances. The host
     // port is ephemeral and can move on `docker start`, so the
     // user-mapping.xml has to be re-rendered when it does.
@@ -92,9 +113,9 @@ async function syncInstanceUpstream(
       }
     }
     const httpDrifted =
-      info.hostPort != null &&
-      info.upstream != null &&
-      (info.hostPort !== inst.hostPort || info.upstream !== inst.upstream);
+      nextHostPort != null &&
+      nextUpstream != null &&
+      (nextHostPort !== inst.hostPort || nextUpstream !== inst.upstream);
     if (!httpDrifted && !rdpDrifted) {
       return {
         hostPort: inst.hostPort,
@@ -109,14 +130,14 @@ async function syncInstanceUpstream(
       rdpHostPort?: number | null;
     } = {};
     if (httpDrifted) {
-      data.hostPort = info.hostPort ?? null;
-      data.upstream = info.upstream ?? null;
+      data.hostPort = nextHostPort ?? null;
+      data.upstream = nextUpstream ?? null;
     }
     if (rdpDrifted) data.rdpHostPort = nextRdp;
     await prisma.labInstance.update({ where: { id: inst.id }, data });
     return {
-      hostPort: httpDrifted ? info.hostPort ?? null : inst.hostPort,
-      upstream: httpDrifted ? info.upstream ?? null : inst.upstream,
+      hostPort: httpDrifted ? nextHostPort ?? null : inst.hostPort,
+      upstream: httpDrifted ? nextUpstream ?? null : inst.upstream,
       rdpHostPort: nextRdp,
       rdpDrifted,
     };
@@ -688,11 +709,17 @@ export async function resumeInstance(
   // hand the student a stale URL.
   const tmpl = await prisma.labTemplate.findUnique({ where: { id: inst.templateId } });
   const parsedSpec = tmpl ? safeParseSpec(tmpl.spec) : null;
+  const primaryContainerPort = parsedSpec?.port;
   const rdpContainerPort =
     parsedSpec && resolveViewer(parsedSpec) === 'guacamole-rdp'
       ? parsedSpec.rdpContainerPort
       : undefined;
-  const synced = await syncInstanceUpstream(inst, runtime, rdpContainerPort);
+  const synced = await syncInstanceUpstream(
+    inst,
+    runtime,
+    primaryContainerPort,
+    rdpContainerPort,
+  );
   const updated = await prisma.labInstance.update({
     where: { id: instanceId },
     data: {
@@ -764,11 +791,17 @@ export async function restartInstance(instanceId: string): Promise<void> {
   // host port; persist any drift before clients try to use the URL.
   const tmpl = await prisma.labTemplate.findUnique({ where: { id: inst.templateId } });
   const parsedSpec = tmpl ? safeParseSpec(tmpl.spec) : null;
+  const primaryContainerPort = parsedSpec?.port;
   const rdpContainerPort =
     parsedSpec && resolveViewer(parsedSpec) === 'guacamole-rdp'
       ? parsedSpec.rdpContainerPort
       : undefined;
-  const synced = await syncInstanceUpstream(inst, runtime, rdpContainerPort);
+  const synced = await syncInstanceUpstream(
+    inst,
+    runtime,
+    primaryContainerPort,
+    rdpContainerPort,
+  );
   const updated = await prisma.labInstance.update({
     where: { id: instanceId },
     data: {
@@ -789,6 +822,79 @@ export async function restartInstance(instanceId: string): Promise<void> {
       );
     }
   }
+}
+
+/**
+ * Best-effort drift reconciler for out-of-band container restarts.
+ *
+ * Problem: when a Docker daemon (especially remote SSH nodes) restarts
+ * a container outside the control-plane lifecycle, ephemeral published
+ * ports can change. DB still points at old ports until a user-triggered
+ * resume/restart path runs, causing Guacamole "unreachable" errors.
+ *
+ * This pass proactively re-inspects active instances and persists any
+ * host/upstream/RDP port drift. If any RDP drift is detected for a row
+ * with Guacamole credentials, user-mapping.xml is regenerated once.
+ */
+export async function reconcileActiveInstanceNetworkingDrift(): Promise<{
+  checked: number;
+  drifted: number;
+  guacamoleResynced: boolean;
+}> {
+  const rows = await prisma.labInstance.findMany({
+    where: {
+      runtimeId: { not: null },
+      status: { in: ['pending', 'provisioning', 'ready', 'idle', 'paused'] },
+    },
+    select: {
+      id: true,
+      nodeId: true,
+      runtimeId: true,
+      hostPort: true,
+      upstream: true,
+      rdpHostPort: true,
+      guacamoleUser: true,
+      template: { select: { spec: true } },
+    },
+  });
+
+  let drifted = 0;
+  let needsGuacResync = false;
+
+  for (const inst of rows) {
+    const spec = safeParseSpec(inst.template.spec);
+    const primaryContainerPort = spec?.port;
+    const rdpContainerPort =
+      spec && resolveViewer(spec) === 'guacamole-rdp' ? spec.rdpContainerPort : undefined;
+    const runtime = await runtimeFor(inst);
+    const synced = await syncInstanceUpstream(
+      inst,
+      runtime,
+      primaryContainerPort,
+      rdpContainerPort,
+    );
+    const changedHost = synced.hostPort !== inst.hostPort || synced.upstream !== inst.upstream;
+    if (changedHost || synced.rdpDrifted) {
+      drifted += 1;
+    }
+    if (synced.rdpDrifted && inst.guacamoleUser) {
+      needsGuacResync = true;
+    }
+  }
+
+  let guacamoleResynced = false;
+  if (needsGuacResync) {
+    try {
+      await regenerateUserMapping(prisma);
+      guacamoleResynced = true;
+    } catch (err) {
+      console.warn(
+        `[orchestrator] guacamole drift reconcile failed: ${(err as Error).message}`,
+      );
+    }
+  }
+
+  return { checked: rows.length, drifted, guacamoleResynced };
 }
 
 /**

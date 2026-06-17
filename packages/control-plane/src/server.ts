@@ -18,6 +18,10 @@ import { hostRoutes } from './routes/host.js';
 import { startPrewarmLoop, stopPrewarmLoop } from './prewarm.js';
 import { startReaperLoop, stopReaperLoop } from './reaper.js';
 import { startNodeHealthLoop, stopNodeHealthLoop } from './nodeHealth.js';
+import {
+  startPortDriftReconcilerLoop,
+  stopPortDriftReconcilerLoop,
+} from './portDriftReconciler.js';
 import { registerWildcardProxy } from './wildcardProxy.js';
 
 const app = Fastify({
@@ -77,6 +81,7 @@ try {
   startPrewarmLoop(app.log);
   startReaperLoop(app.log);
   startNodeHealthLoop(app.log);
+  startPortDriftReconcilerLoop(app.log);
 } catch (err) {
   app.log.error(err);
   process.exit(1);
@@ -88,6 +93,7 @@ const shutdown = async (signal: string) => {
   stopPrewarmLoop();
   stopReaperLoop();
   stopNodeHealthLoop();
+  stopPortDriftReconcilerLoop();
   await app.close();
   process.exit(0);
 };

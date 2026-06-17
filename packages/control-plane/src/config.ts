@@ -102,6 +102,20 @@ const Env = z.object({
   PREWARM_INTERVAL_SECONDS: z.coerce.number().int().positive().default(15),
 
   /**
+   * Background reconciliation that re-inspects active runtimes and fixes
+   * DB/network drift caused by out-of-band Docker restarts on worker nodes.
+   */
+  PORT_DRIFT_RECONCILE_ENABLED: z
+    .string()
+    .default('true')
+    .transform((v) => v === 'true'),
+  PORT_DRIFT_RECONCILE_INTERVAL_SECONDS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(20),
+
+  /**
    * Space-separated list of origins permitted to embed lab UIs in iframes.
    * Default '*' allows embedding from anywhere (suitable for dev and for
    * LMS integrations). For a stricter prod setup, set this to e.g.
