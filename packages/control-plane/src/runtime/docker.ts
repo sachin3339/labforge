@@ -111,6 +111,24 @@ export class DockerRuntime implements LabRuntime {
 
     const env = Object.entries(spec.env).map(([k, v]) => `${k}=${v}`);
 
+    // VM runtimes (dockur/windows, dockur/macos, ...) run QEMU INSIDE the
+    // container. `spec.memoryMb` maps to the guest RAM (RAM_SIZE env), but
+    // the container's total RSS is guest RAM PLUS QEMU's own overhead —
+    // framebuffer, OVMF/UEFI, TPM emulation, dirty-page tracking, host
+    // page tables — which runs ~1–2 GiB for a desktop Windows guest.
+    //
+    // If the cgroup Memory limit equals the guest RAM (as it did), the
+    // container exceeds its limit the moment the guest commits most of its
+    // RAM and the cgroup OOM-killer terminates QEMU (State.OOMKilled=true,
+    // exit 0 from the entrypoint's trap). Students see this as a random
+    // BSOD / "VM crashed" / session-closed termination. Give VM containers
+    // headroom above the guest RAM so QEMU has room to breathe.
+    const isVmRuntime = spec.runtime === 'vm';
+    const memoryOverheadMb = isVmRuntime
+      ? Math.max(2048, Math.round(spec.memoryMb * 0.2))
+      : 0;
+    const memoryLimitBytes = (spec.memoryMb + memoryOverheadMb) * 1024 * 1024;
+
     // Build HostConfig.Devices for /dev/kvm and friends.
     const devices = (spec.devices ?? []).map((path) => ({
       PathOnHost: path,
@@ -149,7 +167,7 @@ export class DockerRuntime implements LabRuntime {
       ExposedPorts: exposedPorts,
       HostConfig: {
         NetworkMode: config.DOCKER_NETWORK,
-        Memory: spec.memoryMb * 1024 * 1024,
+        Memory: memoryLimitBytes,
         NanoCpus: Math.round(spec.cpu * 1e9),
         Binds: binds.length ? binds : undefined,
         // Templates can opt into a relaxed security profile (sudo works,
