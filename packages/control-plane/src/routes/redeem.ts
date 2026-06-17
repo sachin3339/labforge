@@ -141,6 +141,10 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
+    const parsedSpec = LabTemplateSpec.safeParse(launch.template.spec);
+    const isGuacamoleRdp =
+      parsedSpec.success && resolveViewer(parsedSpec.data) === 'guacamole-rdp';
+
     // If the reaper had suspended the lab (cost saver), resume it now and
     // wait for the upstream to be reachable. The student should never see
     // a 502 immediately after redeeming.
@@ -153,7 +157,7 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
         reply.code(503);
         return { error: 'resume_failed', detail: (err as Error).message };
       }
-    } else if (instance.runtimeId && instance.upstream) {
+    } else if (instance.runtimeId && instance.upstream && !isGuacamoleRdp) {
       // Freshly provisioned containers can take a few seconds to listen on
       // their port (Windows boot can take 30s+). Block briefly so the
       // redirect lands on a working URL.
@@ -197,8 +201,7 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
     // If the gateway isn't configured / disabled, fall through to the
     // legacy in-container noVNC flow so an operator who hasn't finished
     // wiring Guacamole yet still has a working lab.
-    const parsedSpec = LabTemplateSpec.safeParse(launch.template.spec);
-    if (parsedSpec.success && resolveViewer(parsedSpec.data) === 'guacamole-rdp') {
+    if (isGuacamoleRdp) {
       try {
         const gconf = await loadGuacamoleConfig(prisma);
         if (gconf && gconf.enabled && gconf.publicUrl) {

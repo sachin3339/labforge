@@ -152,14 +152,7 @@ export function renderUserMappingXml(rows: RenderRow[], gconf: GuacamoleConfig):
     lines.push('      <protocol>rdp</protocol>');
     lines.push(`      <param name="hostname">${escapeXmlAttr(host)}</param>`);
     lines.push(`      <param name="port">${String(r.instance.rdpHostPort)}</param>`);
-    // Rotate RDP username to avoid Windows session conflicts: if template
-    // specifies 'Docker', use Docker0, Docker1, Docker2, etc. based on
-    // instance index. Windows only allows one concurrent session per user,
-    // so multiple concurrent labs need different usernames.
-    const baseUser = r.spec.rdpUsername;
-    const userIndex = idx % 10; // Support up to 10 concurrent instances per template
-    const rdpUser = `${baseUser}${userIndex}`;
-    lines.push(`      <param name="username">${escapeXmlAttr(rdpUser)}</param>`);
+    lines.push(`      <param name="username">${escapeXmlAttr(r.spec.rdpUsername)}</param>`);
     if (r.spec.rdpPassword) {
       lines.push(`      <param name="password">${escapeXmlAttr(r.spec.rdpPassword)}</param>`);
     }
@@ -352,9 +345,12 @@ async function regenerateUserMappingInner(
  * the student lands directly on their (single) connection without a
  * login screen.
  *
- * Format: `<publicUrl>/guacamole/?username=<u>&password=<p>` —
- * Guacamole's file-auth provider accepts these parameters and the
- * single-connection user-mapping makes auto-connect implicit.
+ * Format: `<publicUrl>/guacamole/?logout=true&username=<u>&password=<p>&_ts=<n>`
+ *
+ * `logout=true` forces Guacamole to drop any prior authenticated browser
+ * session before applying query auth. Without this, opening multiple seat
+ * links in the same browser can reuse the first session and collapse users
+ * onto one connection. `_ts` prevents intermediary/browser cache reuse.
  */
 export function guacamoleClientUrl(
   gconf: GuacamoleConfig,
@@ -362,6 +358,11 @@ export function guacamoleClientUrl(
   password: string,
 ): string {
   const base = gconf.publicUrl.replace(/\/+$/, '');
-  const qs = new URLSearchParams({ username: user, password });
+  const qs = new URLSearchParams({
+    logout: 'true',
+    username: user,
+    password,
+    _ts: String(Date.now()),
+  });
   return `${base}/guacamole/?${qs.toString()}`;
 }
