@@ -166,11 +166,18 @@ function shQuote(s: string): string {
  * option or device was found" at UEFI.
  *
  * Also seeds the per-instance dir with dockur's "install completed"
- * marker files (windows.ver, windows.base, windows.mac, windows.mode,
- * windows.boot) and the UEFI NVRAM/TPM state files
- * (windows_secure.{rom,tpm,vars}) by copying them out of the golden's
- * parent directory. Without this, dockur sees a "fresh" /storage and
- * runs the Windows installer again, wiping the overlay before boot.
+ * marker files (windows.ver, windows.base, windows.mode, windows.boot)
+ * and the UEFI NVRAM/TPM state files (windows_secure.{rom,tpm,vars}) by
+ * copying them out of the golden's parent directory. Without this,
+ * dockur sees a "fresh" /storage and runs the Windows installer again,
+ * wiping the overlay before boot.
+ *
+ * `windows.mac` is deliberately NOT copied from the golden: it stores
+ * the VM's NIC MAC address, and the golden carries a single fixed MAC.
+ * Seeding it into every clone gave all VMs on a node the SAME MAC,
+ * which collides at layer 2 (ARP confusion, RDP "Disconnected by other
+ * connection", frozen/crashing desktops). Instead each overlay gets a
+ * freshly generated, unique locally-administered MAC.
  *
  * Idempotent: if the dir already exists with a data.qcow2, this is a
  * no-op (qemu-img would refuse to overwrite, which is what we want
@@ -191,10 +198,15 @@ export async function qemuImgCreateOverlay(
   // (same place where the operator put `golden.img` after the bootstrap
   // builder finished). Per-instance copies — TPM/NVRAM state diverges
   // between instances at runtime, so each overlay needs its own.
+  //
+  // NB: `windows.mac` is intentionally absent here. It must be UNIQUE
+  // per instance — copying the golden's single MAC into every clone
+  // gives them all the same layer-2 address and they fight on the wire
+  // (duplicate-MAC ARP collisions surface as RDP "Disconnected by other
+  // connection" and crashing/frozen VMs). We generate a fresh one below.
   const seedFiles = [
     'windows.ver',
     'windows.base',
-    'windows.mac',
     'windows.mode',
     'windows.boot',
     'windows_secure.rom',
@@ -202,6 +214,7 @@ export async function qemuImgCreateOverlay(
     'windows_secure.vars',
   ];
   const seedShellList = seedFiles.map((f) => shQuote(f)).join(' ');
+  const macPath = `${overlayDir}/windows.mac`;
   const cmd = [
     `mkdir -p ${shQuote(overlayDir)}`,
     `if [ ! -f ${shQuote(dataPath)} ]; then`,
@@ -213,6 +226,12 @@ export async function qemuImgCreateOverlay(
     `    cp -- "$goldenDir/$f" ${shQuote(overlayDir)}/`,
     `  fi`,
     `done`,
+    // Generate a unique locally-administered unicast MAC for this clone
+    // (first octet 0x02 = locally administered, unicast). Idempotent:
+    // only written when absent so resume-after-crash keeps the same MAC.
+    `if [ ! -f ${shQuote(macPath)} ]; then`,
+    `  printf '02:%02x:%02x:%02x:%02x:%02x\\n' $(od -An -N5 -tu1 /dev/urandom) > ${shQuote(macPath)}`,
+    `fi`,
     `true`,
   ].join('\n');
   const res = await nodeExec(node, cmd);
