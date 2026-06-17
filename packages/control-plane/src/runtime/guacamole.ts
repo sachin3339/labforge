@@ -33,6 +33,11 @@ import type {
 } from '@prisma/client';
 import { LabTemplateSpec, type LabTemplateSpec as LabTemplateSpecT } from '@labforge/shared';
 import { nodeExec } from './nodeShell.js';
+import {
+  guacJdbcEnabled,
+  syncGuacConnections,
+  type GuacJdbcRow,
+} from './guacamoleJdbc.js';
 
 /**
  * Generate a URL-safe random string. 24 bytes of entropy → 32 chars
@@ -336,7 +341,51 @@ async function regenerateUserMappingInner(
   }
   const body = renderUserMappingXml(rows, gconf);
   await writeUserMapping(gconf, body);
+
+  // Dual-write to the Guacamole JDBC backend when configured. This is the
+  // backend that actually enforces the single-connection limit; the XML
+  // write above is kept as a transitional fallback. Non-fatal: a JDBC
+  // hiccup must not lose the (successful) XML write.
+  if (guacJdbcEnabled()) {
+    try {
+      const jdbcRows = rowsToJdbc(rows, gconf);
+      await syncGuacConnections(jdbcRows);
+    } catch {
+      // swallow — best-effort during migration; redeem also self-heals by
+      // upserting the single connection it needs on demand.
+    }
+  }
+
   return { rendered: rows.length, written: true };
+}
+
+/**
+ * Project the XML render rows onto the flat shape the JDBC provisioner
+ * wants, applying the same skip guards (must have creds, an RDP host
+ * port, an RDP username, and a resolvable hostname).
+ */
+function rowsToJdbc(rows: RenderRow[], gconf: GuacamoleConfig): GuacJdbcRow[] {
+  const out: GuacJdbcRow[] = [];
+  for (const r of rows) {
+    if (!r.instance.guacamoleUser || !r.instance.guacamolePassword) continue;
+    if (!r.instance.rdpHostPort) continue;
+    if (!r.spec.rdpUsername) continue;
+    const host =
+      r.node?.proxyHost && r.node.proxyHost.length > 0
+        ? r.node.proxyHost
+        : gconf.defaultRdpHost ?? '';
+    if (!host) continue;
+    out.push({
+      instanceId: r.instance.id,
+      guacUser: r.instance.guacamoleUser,
+      guacPassword: r.instance.guacamolePassword,
+      hostname: host,
+      port: r.instance.rdpHostPort,
+      rdpUsername: r.spec.rdpUsername,
+      rdpPassword: r.spec.rdpPassword ?? null,
+    });
+  }
+  return out;
 }
 
 /**

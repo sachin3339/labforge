@@ -17,6 +17,10 @@ import {
   loadGuacamoleConfig,
   regenerateUserMapping,
 } from '../runtime/guacamole.js';
+import {
+  getGuacConnectionId,
+  guacamoleClientUrlJdbc,
+} from '../runtime/guacamoleJdbc.js';
 import { config } from '../config.js';
 import { warmingUpHtml } from '../ui/warmingPage.js';
 import { emitUsage } from '../metering.js';
@@ -207,7 +211,16 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
         if (gconf && gconf.enabled && gconf.publicUrl) {
           const creds = await ensureGuacamoleCredentials(prisma, instance.id);
           await regenerateUserMapping(prisma);
-          const url = guacamoleClientUrl(gconf, creds.user, creds.password);
+          // Prefer the JDBC backend (enforces the single-connection limit
+          // that prevents the "conflicts with another connection" storm).
+          // regenerateUserMapping just provisioned/refreshed it, so the
+          // connection_id is available; fall back to the legacy XML
+          // query-auth URL if JDBC is disabled or not yet provisioned.
+          const connId = await getGuacConnectionId(instance.id);
+          const url =
+            connId != null
+              ? guacamoleClientUrlJdbc(gconf.publicUrl, creds.user, creds.password, connId)
+              : guacamoleClientUrl(gconf, creds.user, creds.password);
           // No lf_session cookie here — Guacamole is a separate origin
           // and uses its own auth (the username/password in the URL).
           reply.redirect(url, 302);

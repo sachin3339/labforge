@@ -151,6 +151,19 @@ const Env = z.object({
    * rotation.
    */
   NODE_HEALTH_STALE_SECONDS: z.coerce.number().int().positive().default(120),
+
+  /**
+   * Connection string for the Apache Guacamole JDBC (PostgreSQL) auth
+   * database, e.g. `postgresql://guacamole:<pw>@postgres:5432/guacamole_db`.
+   * When set, the control-plane provisions per-instance Guacamole users +
+   * connections directly into this DB with a hard concurrency limit of one
+   * (`max_connections` / `max_connections_per_user` = 1). This protects an
+   * active RDP session: a duplicate/refresh open is rejected by Guacamole
+   * instead of kicking the live session — the root-cause fix for dockur
+   * Windows' single-session "conflicts with another connection" error.
+   * Leave empty to fall back to legacy file-based user-mapping.xml auth.
+   */
+  GUACAMOLE_DB_URL: z.string().default(''),
 });
 
 export type AppConfig = z.infer<typeof Env>;

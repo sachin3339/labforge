@@ -89,7 +89,10 @@ services:
     image: guacamole/guacamole:1.5.5
     restart: unless-stopped
     depends_on:
-      - guacd
+      guacd:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
       # The official start.sh has two non-negotiable side effects at boot:
       #   1. `rm -Rf ~/.guacamole` (line 1045) — blows away the runtime
@@ -113,6 +116,19 @@ services:
       GUACAMOLE_HOME: /etc/guacamole
       GUACD_HOSTNAME: guacd
       GUACD_PORT: '4822'
+      # PostgreSQL JDBC auth (bundled in the image; enabled by these vars).
+      # This backend enforces the per-connection concurrency limit
+      # (max_connections / max_connections_per_user = 1) that the
+      # control-plane sets on every lab connection, so a duplicate/refresh
+      # open is rejected instead of kicking the live RDP session. The
+      # file-based user-mapping.xml mount below is kept as a transitional
+      # fallback; both auth providers load side by side.
+      POSTGRESQL_HOSTNAME: postgres
+      POSTGRESQL_PORT: '5432'
+      POSTGRESQL_DATABASE: guacamole_db
+      POSTGRESQL_USER: guacamole
+      POSTGRESQL_PASSWORD: ${GUAC_DB_PASSWORD}
+      POSTGRESQL_AUTO_CREATE_ACCOUNTS: 'false'
     entrypoint:
       - /bin/bash
       - -c
@@ -161,6 +177,9 @@ services:
       LOG_LEVEL: info
       DATABASE_URL: postgresql://labforge:${POSTGRES_PASSWORD:-labforge}@postgres:5432/labforge?schema=public
       REDIS_URL: redis://redis:6379
+      # Guacamole JDBC auth DB — control-plane provisions per-instance users +
+      # connections (with concurrency limit = 1) directly into this DB.
+      GUACAMOLE_DB_URL: postgresql://guacamole:${GUAC_DB_PASSWORD}@postgres:5432/guacamole_db
       JWT_PRIVATE_KEY_B64: ${JWT_PRIVATE_KEY_B64}
       JWT_PUBLIC_KEY_B64: ${JWT_PUBLIC_KEY_B64}
       JWT_ISSUER: ${JWT_ISSUER:-labforge}
