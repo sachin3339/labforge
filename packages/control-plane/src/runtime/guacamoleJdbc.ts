@@ -192,13 +192,26 @@ async function upsertConnection(
 }
 
 /**
- * Full reconcile: upsert every live row and prune connections/users that
- * are no longer present. Mirrors regenerateUserMapping's whole-file
+ * Full reconcile: upsert every renderable row and prune connections/users
+ * that are no longer present. Mirrors regenerateUserMapping's whole-file
  * rebuild semantics so the two backends stay in lock-step during the
  * migration window. No-op when JDBC is disabled.
+ *
+ * CRITICAL: pruning must NOT delete a connection that belongs to a still
+ * live instance just because that instance was momentarily un-renderable
+ * (e.g. its RDP host:port hadn't been reconciled yet this tick, so it was
+ * dropped by the caller's skip guards and is absent from `rows`). Deleting
+ * + later recreating a connection reassigns its serial connection_id, which
+ * silently invalidates every auto-login URL already handed to that student
+ * — their open Guacamole tab keeps requesting the old id and guacd answers
+ * "Requested tunnel destination does not exist" on every (re)connect. To
+ * keep ids stable, callers pass `keep` = the FULL set of live instances /
+ * users; prune only removes entries outside that superset. When `keep` is
+ * omitted we fall back to the upserted rows (legacy behaviour).
  */
 export async function syncGuacConnections(
   rows: GuacJdbcRow[],
+  keep?: { connNames: string[]; userNames: string[] },
 ): Promise<{ synced: number }> {
   const p = getGuacPool();
   if (!p) return { synced: 0 };
@@ -206,13 +219,22 @@ export async function syncGuacConnections(
   const client = await p.connect();
   try {
     await client.query('BEGIN');
-    const liveConnNames: string[] = [];
-    const liveUserNames: string[] = [];
+    // Upsert every renderable row (stable id: existing connections are
+    // UPDATEd in place, never delete+recreated).
     for (const row of rows) {
       await upsertConnection(client, row);
-      liveConnNames.push(row.instanceId);
-      liveUserNames.push(row.guacUser);
     }
+    // Build the prune keep-set as a superset of what we just upserted plus
+    // any additional live names the caller declared. An instance that is
+    // live but un-renderable this tick stays in `keep` and is preserved.
+    const keepConn = new Set<string>(keep?.connNames ?? []);
+    const keepUser = new Set<string>(keep?.userNames ?? []);
+    for (const row of rows) {
+      keepConn.add(row.instanceId);
+      keepUser.add(row.guacUser);
+    }
+    const liveConnNames = [...keepConn];
+    const liveUserNames = [...keepUser];
 
     // Prune stale top-level connections.
     if (liveConnNames.length > 0) {
@@ -273,14 +295,20 @@ export async function getGuacConnectionId(
  * `username`/`password` drive Guacamole's auto-login; `logout=true` drops
  * any prior browser session so opening a *different* seat in the same
  * browser switches users cleanly; `_ts` busts intermediary caches.
+ *
+ * `baseUrl` is the per-VM origin (e.g. `https://<sub>.lab.<root>`), NOT the
+ * shared gateway host. Serving each VM's client from its own subdomain
+ * origin gives the browser a separate localStorage partition, so the
+ * GUAC_AUTH / GUAC_HISTORY / GUAC_PREFERENCES keys no longer collide across
+ * tabs when a student opens several VMs at once.
  */
 export function guacamoleClientUrlJdbc(
-  publicUrl: string,
+  baseUrl: string,
   user: string,
   password: string,
   connectionId: number,
 ): string {
-  const base = publicUrl.replace(/\/+$/, '');
+  const base = baseUrl.replace(/\/+$/, '');
   const qs = new URLSearchParams({
     logout: 'true',
     username: user,

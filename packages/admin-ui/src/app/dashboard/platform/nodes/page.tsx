@@ -25,6 +25,22 @@ type NodeRow = {
   lastError: string | null;
   dockerVersion: string | null;
   _count: { instances: number };
+  // Live load + health stats computed server-side. `_count.instances` above
+  // is kept for back-compat but now also means LIVE (non-terminated).
+  stats?: {
+    live: number;
+    claimed: number;
+    prewarm: number;
+    allTime: number;
+    byStatus: Record<string, number>;
+    capacityMax: number;
+    available: number | null;
+    utilizationPct: number | null;
+    healthy: boolean;
+    lastSeenAt: string | null;
+    lastError: string | null;
+    dockerVersion: string | null;
+  };
 };
 
 // All node mutations end with `revalidatePath` so the table reflects the
@@ -200,8 +216,12 @@ export default async function NodesPage() {
   const nodes = res.data.nodes;
 
   // Cluster overview cards — purely derived from the data we already fetch.
+  // `stats.live` is the real running-container count (non-terminated); the
+  // old `_count.instances` used to be all-time and inflated these numbers.
   const enabledCount = nodes.filter((n) => n.enabled).length;
-  const liveContainers = nodes.reduce((a, n) => a + n._count.instances, 0);
+  const liveContainers = nodes.reduce((a, n) => a + (n.stats?.live ?? n._count.instances), 0);
+  const claimedContainers = nodes.reduce((a, n) => a + (n.stats?.claimed ?? 0), 0);
+  const prewarmContainers = nodes.reduce((a, n) => a + (n.stats?.prewarm ?? 0), 0);
   const totalCapacity = nodes.reduce((a, n) => a + (n.capacityMax || 0), 0);
 
   return (
@@ -229,6 +249,9 @@ export default async function NodesPage() {
         <div className="kpi text-sky-500">
           <div className="kpi-label">Live containers</div>
           <div className="kpi-value">{liveContainers}</div>
+          <div className="kpi-hint">
+            {claimedContainers} claimed · {prewarmContainers} warm
+          </div>
         </div>
         <div className="kpi text-ink-500">
           <div className="kpi-label">Total capacity</div>
@@ -291,11 +314,18 @@ export default async function NodesPage() {
                 <div className="flex flex-wrap items-center gap-3 text-xs text-ink-900/70">
                   <HealthSummary node={n} />
                   <span>
-                    <strong>{n._count.instances}</strong> instances
+                    <strong>{n.stats?.live ?? n._count.instances}</strong> live
                   </span>
+                  {n.capacityMax > 0 && (
+                    <span title="live / capacityMax">
+                      {n.stats?.utilizationPct ?? 0}% of {n.capacityMax}
+                    </span>
+                  )}
                   <span>proxy → {n.proxyHost}</span>
                 </div>
               </summary>
+
+              <NodeReport node={n} />
 
               <div className="mt-4 grid gap-4 lg:grid-cols-[2fr_1fr]">
                 <NodeForm action={updateNode} submitLabel="Save changes" node={n} />
@@ -560,6 +590,132 @@ function HealthDot({ node }: { node: NodeRow }) {
         ? `Unreachable: ${node.lastError ?? 'no recent ping'}`
         : 'No health data yet (waiting for first poll)';
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${tone}`} title={title} />;
+}
+
+/**
+ * Per-node health + load report. Surfaces the precise numbers operators
+ * need to decide whether a node can take more labs: live vs capacity,
+ * claimed vs warm-pool split, a status breakdown, and the health/ping
+ * details (last seen, last error, docker version).
+ */
+function NodeReport({ node }: { node: NodeRow }) {
+  const s = node.stats;
+  const health = nodeHealth(node);
+  const util = s?.utilizationPct ?? null;
+  const utilTone =
+    util === null
+      ? 'bg-ink-300'
+      : util >= 90
+        ? 'bg-red-500'
+        : util >= 70
+          ? 'bg-amber-500'
+          : 'bg-emerald-500';
+
+  // Order the common statuses first, then anything else we don't know about.
+  const order = ['ready', 'idle', 'provisioning', 'pending', 'suspended', 'failed', 'terminated'];
+  const byStatus = s?.byStatus ?? {};
+  const statusKeys = Object.keys(byStatus).sort(
+    (a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99),
+  );
+
+  return (
+    <div className="mt-3 grid gap-3 rounded-lg border border-ink-200/70 bg-ink-50/40 p-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+      {/* Health */}
+      <div>
+        <div className="kpi-label mb-1">Health</div>
+        <div className="flex items-center gap-1.5">
+          <HealthDot node={node} />
+          <span
+            className={
+              health === 'ok'
+                ? 'font-medium text-emerald-700'
+                : health === 'down'
+                  ? 'font-medium text-red-700'
+                  : 'text-ink-900/60'
+            }
+          >
+            {health === 'ok' ? 'healthy' : health === 'down' ? 'unreachable' : 'awaiting poll'}
+          </span>
+        </div>
+        <div className="mt-1 text-ink-900/60">
+          {s?.lastSeenAt ?? node.lastSeenAt
+            ? `last seen ${new Date((s?.lastSeenAt ?? node.lastSeenAt) as string).toLocaleString()}`
+            : 'never polled'}
+        </div>
+        {(s?.dockerVersion ?? node.dockerVersion) && (
+          <div className="text-ink-900/60">docker {s?.dockerVersion ?? node.dockerVersion}</div>
+        )}
+        {(s?.lastError ?? node.lastError) && (
+          <div className="mt-1 text-red-600" title={(s?.lastError ?? node.lastError) ?? undefined}>
+            err: {((s?.lastError ?? node.lastError) ?? '').slice(0, 60)}
+          </div>
+        )}
+      </div>
+
+      {/* Load / capacity */}
+      <div>
+        <div className="kpi-label mb-1">Load</div>
+        <div className="text-base font-semibold text-ink-900">
+          {s?.live ?? node._count.instances}
+          {node.capacityMax > 0 ? (
+            <span className="text-sm font-normal text-ink-900/60"> / {node.capacityMax}</span>
+          ) : (
+            <span className="text-sm font-normal text-ink-900/60"> live (∞)</span>
+          )}
+        </div>
+        {node.capacityMax > 0 && (
+          <>
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-ink-200">
+              <div
+                className={`h-full ${utilTone}`}
+                style={{ width: `${Math.min(util ?? 0, 100)}%` }}
+              />
+            </div>
+            <div className="mt-1 text-ink-900/60">
+              {util}% used · {s?.available ?? '—'} free
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Claimed vs warm */}
+      <div>
+        <div className="kpi-label mb-1">Occupancy</div>
+        <div className="text-ink-900/80">
+          <strong className="text-ink-900">{s?.claimed ?? 0}</strong> claimed
+        </div>
+        <div className="text-ink-900/80">
+          <strong className="text-ink-900">{s?.prewarm ?? 0}</strong> warm spares
+        </div>
+        <div className="mt-1 text-ink-900/50">{s?.allTime ?? 0} all-time</div>
+      </div>
+
+      {/* Status breakdown */}
+      <div>
+        <div className="kpi-label mb-1">By status</div>
+        {statusKeys.length === 0 ? (
+          <div className="text-ink-900/50">no instances</div>
+        ) : (
+          <div className="flex flex-wrap gap-1">
+            {statusKeys.map((k) => (
+              <span
+                key={k}
+                className={`badge ${
+                  k === 'failed'
+                    ? 'bg-red-100 text-red-700'
+                    : k === 'terminated'
+                      ? 'bg-ink-100 text-ink-500'
+                      : 'bg-ink-100 text-ink-700'
+                }`}
+              >
+                {k} {byStatus[k]}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function HealthSummary({ node }: { node: NodeRow }) {

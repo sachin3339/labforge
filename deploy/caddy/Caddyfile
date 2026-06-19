@@ -35,9 +35,29 @@ api.environments.learnlytica.com {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }
+
+    # Guacamole HTML5 RDP client is served per-VM on the VM's OWN lab
+    # subdomain so every VM gets an isolated browser origin. Browsers
+    # partition localStorage by origin, so the GUAC_AUTH / GUAC_HISTORY /
+    # GUAC_PREFERENCES keys no longer collide across tabs when a student
+    # opens several VMs at once. These requests (including the
+    # /guacamole/websocket-tunnel framebuffer) go straight to the shared
+    # guacamole container — one wildcard, no per-VM DNS/cert/route — and
+    # bypass the control-plane lf_session cookie (Guacamole authenticates
+    # via its own username/password query-auth).
+    @guac path /guacamole /guacamole/*
+    handle @guac {
+        reverse_proxy guacamole:8080 {
+            flush_interval -1
+        }
+    }
+
+    # Everything else → control-plane wildcard proxy (noVNC / Kasm labs).
     # WebSocket upgrades flow through unchanged.
-    reverse_proxy control-plane:4000 {
-        flush_interval -1
+    handle {
+        reverse_proxy control-plane:4000 {
+            flush_interval -1
+        }
     }
 }
 

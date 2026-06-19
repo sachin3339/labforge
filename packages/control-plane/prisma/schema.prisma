@@ -78,6 +78,13 @@ model Launch {
   webhookUrl    String?
   context       Json?
 
+  /// Optional node placement override carried from the launch/batch API
+  /// request. When non-empty, new instances for this launch round-robin
+  /// across these node ids instead of the template's pinned/allowed pool;
+  /// if all are unhealthy/at capacity the scheduler falls back to the
+  /// normal fleet pool. Empty = follow template/tenant defaults.
+  nodeIds       String[] @default([])
+
   /// JTI of the launch token; null once redeemed (single-use).
   tokenJti      String?  @unique
   redeemedAt    DateTime?

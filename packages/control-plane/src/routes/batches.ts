@@ -14,6 +14,7 @@ import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { destroyInstance } from '../orchestrator.js';
 import { acquireInstance, resumeInstance } from '../orchestrator.js';
+import { resolveNodeNamesToIds } from '../runtime/nodes.js';
 
 /**
  * Admin-issued bulk launch URLs. One call → N single-use, long-lived
@@ -170,6 +171,18 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'template_not_found' };
     }
 
+    // Resolve any requested node-placement override (by name) to node ids,
+    // once for the whole batch. Unknown names are a hard 400.
+    let nodeIds: string[] = [];
+    if (body.nodeNames && body.nodeNames.length > 0) {
+      const resolved = await resolveNodeNamesToIds(body.nodeNames);
+      if (resolved.unknown.length > 0) {
+        reply.code(400);
+        return { error: 'unknown_node_names', unknown: resolved.unknown };
+      }
+      nodeIds = resolved.ids;
+    }
+
     const batchId = `b_${nanoid(12)}`;
     const ttlSeconds = body.ttlHours * 3600;
     const durationMinutes = Math.min(
@@ -217,6 +230,7 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
               batchLabel: body.label,
               seat,
             },
+            nodeIds,
             tokenJti: jti,
             expiresAt,
           },
@@ -610,6 +624,7 @@ export const batchRoutes: FastifyPluginAsync = async (app) => {
             userIdHash: l.userIdHash,
             durationMinutes: l.durationMinutes,
             expiresAt: l.expiresAt,
+            nodeIds: l.nodeIds,
           });
           await prisma.launch.update({
             where: { id: l.id },

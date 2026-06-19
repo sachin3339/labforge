@@ -175,7 +175,12 @@ services:
       NODE_ENV: production
       PORT: 4000
       LOG_LEVEL: info
-      DATABASE_URL: postgresql://labforge:${POSTGRES_PASSWORD:-labforge}@postgres:5432/labforge?schema=public
+      # connection_limit raised from the Prisma default (cpus*2+1 = 13) because
+      # the wildcard lab proxy resolves the subdomain->instance on every asset
+      # request; under real cohort load a 13-conn pool saturates and Prisma
+      # throws P2024 "Timed out fetching a connection". Postgres max_connections
+      # is 100; we keep well under it (control-plane 40 + guac JDBC pool 4).
+      DATABASE_URL: postgresql://labforge:${POSTGRES_PASSWORD:-labforge}@postgres:5432/labforge?schema=public&connection_limit=40&pool_timeout=20
       REDIS_URL: redis://redis:6379
       # Guacamole JDBC auth DB — control-plane provisions per-instance users +
       # connections (with concurrency limit = 1) directly into this DB.

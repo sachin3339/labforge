@@ -145,6 +145,11 @@ export const DEFAULT_CATALOG: CatalogTemplate[] = [
   // The image tag is pinned to a known-good dockur/windows release —
   // `:latest` regressed twice during golden-image testing and lost a
   // run mid-install with no log line.
+  //
+  // The student toolchain (Python 3.12, Jupyter, MySQL Server +
+  // Workbench 8.0, Git Bash, Postman, MongoDB Server + Compass, VS Code)
+  // is baked into the golden image by the OEM provisioner under
+  // deploy/images/windows-golden/ — see docs/ops/windows-golden-build.md.
   {
     name: 'windows-11',
     description:

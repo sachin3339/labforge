@@ -8,6 +8,7 @@ import { hashUserId, signLaunchToken } from '../auth/jwt.js';
 import { config } from '../config.js';
 import { emitUsage } from '../metering.js';
 import { acquireInstance, resumeInstance, runtimeFor, waitUntilReady } from '../orchestrator.js';
+import { resolveNodeNamesToIds } from '../runtime/nodes.js';
 
 export const launchRoutes: FastifyPluginAsync = async (app) => {
   app.addHook('preHandler', authenticateTenant);
@@ -63,6 +64,19 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
       return { error: 'template_not_found' };
     }
 
+    // Resolve any requested node-placement override (by name) to node ids.
+    // A typo'd / unknown node name is a hard 400 so it never silently falls
+    // back to the fleet pool.
+    let nodeIds: string[] = [];
+    if (body.nodeNames && body.nodeNames.length > 0) {
+      const resolved = await resolveNodeNamesToIds(body.nodeNames);
+      if (resolved.unknown.length > 0) {
+        reply.code(400);
+        return { error: 'unknown_node_names', unknown: resolved.unknown };
+      }
+      nodeIds = resolved.ids;
+    }
+
     const durationMinutes = Math.min(
       body.durationMinutes,
       config.LAB_MAX_DURATION_MINUTES,
@@ -90,6 +104,7 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
         returnUrl: body.returnUrl,
         webhookUrl: body.webhookUrl,
         context: body.context ?? {},
+        nodeIds,
         tokenJti: jti,
         expiresAt,
       },
@@ -245,6 +260,7 @@ export const launchRoutes: FastifyPluginAsync = async (app) => {
           userIdHash: launch.userIdHash,
           durationMinutes: launch.durationMinutes,
           expiresAt: launch.expiresAt,
+          nodeIds: launch.nodeIds,
         });
       } catch (err) {
         reply.code(500);

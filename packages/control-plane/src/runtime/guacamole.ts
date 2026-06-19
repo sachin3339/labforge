@@ -349,7 +349,18 @@ async function regenerateUserMappingInner(
   if (guacJdbcEnabled()) {
     try {
       const jdbcRows = rowsToJdbc(rows, gconf);
-      await syncGuacConnections(jdbcRows);
+      // Prune keep-set = EVERY live instance/user (not just the renderable
+      // subset), so an instance that's temporarily missing its RDP host:port
+      // this tick keeps its existing connection + stable connection_id rather
+      // than being deleted and later recreated with a new id (which would
+      // break already-issued auto-login URLs mid-session).
+      const keep = {
+        connNames: rows.map((r) => r.instance.id),
+        userNames: rows
+          .map((r) => r.instance.guacamoleUser)
+          .filter((u): u is string => !!u),
+      };
+      await syncGuacConnections(jdbcRows, keep);
     } catch {
       // swallow — best-effort during migration; redeem also self-heals by
       // upserting the single connection it needs on demand.

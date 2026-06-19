@@ -5,6 +5,7 @@ import { prisma } from '../db.js';
 import { authenticateTenant, requirePlatform } from '../auth/apiKey.js';
 import { provisionDefaultCatalog } from '../catalog/defaults.js';
 import { invalidateNodeRuntime, pingNode } from '../runtime/nodes.js';
+import { config } from '../config.js';
 
 /**
  * Platform-admin routes. Only tenants with `role='platform'` may call these.
@@ -151,15 +152,69 @@ export const platformRoutes: FastifyPluginAsync = async (app) => {
   //   land lab containers on.
   // ============================================================
 
-  // ----- List nodes -----
+  // ----- List nodes (with live load + health stats) -----
+  // The per-node `_count.instances` Prisma gives us is ALL-TIME (it counts
+  // terminated/failed rows too), which made the UI show wildly inflated
+  // "live container" numbers. We instead group instances by (node, status,
+  // isPrewarm) and derive real live/claimed/prewarm counts + capacity
+  // utilisation + health so operators can size the fleet accurately.
   app.get('/nodes', async () => {
-    const nodes = await prisma.node.findMany({
-      orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
-      include: {
-        _count: { select: { instances: true } },
-      },
+    const [nodes, grouped] = await Promise.all([
+      prisma.node.findMany({
+        orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
+      }),
+      prisma.labInstance.groupBy({
+        by: ['nodeId', 'status', 'isPrewarm'],
+        _count: { _all: true },
+      }),
+    ]);
+
+    const staleCutoff = new Date(Date.now() - config.NODE_HEALTH_STALE_SECONDS * 1000);
+    // Rows in these statuses occupy no host resources — exclude from "live".
+    const DEAD = new Set(['terminated', 'failed']);
+
+    const nodesOut = nodes.map((n) => {
+      const rows = grouped.filter((g) => g.nodeId === n.id);
+      const byStatus: Record<string, number> = {};
+      let live = 0; // running containers (non-terminated, non-failed)
+      let prewarm = 0; // live warm-pool spares (no student yet)
+      let allTime = 0; // every row ever, for reference
+      for (const r of rows) {
+        const c = r._count._all;
+        allTime += c;
+        byStatus[r.status] = (byStatus[r.status] ?? 0) + c;
+        if (!DEAD.has(r.status)) {
+          live += c;
+          if (r.isPrewarm) prewarm += c;
+        }
+      }
+      // claimed = live student-occupied containers (live minus warm spares).
+      const claimed = Math.max(live - prewarm, 0);
+      const healthy = n.lastSeenAt === null || n.lastSeenAt >= staleCutoff;
+      const available = n.capacityMax > 0 ? Math.max(n.capacityMax - live, 0) : null;
+      const utilizationPct =
+        n.capacityMax > 0 ? Math.round((live / n.capacityMax) * 100) : null;
+      return {
+        ...redactNode(n),
+        // Back-compat: keep the old shape but make it mean LIVE, not all-time.
+        _count: { instances: live },
+        stats: {
+          live,
+          claimed,
+          prewarm,
+          allTime,
+          byStatus,
+          capacityMax: n.capacityMax,
+          available,
+          utilizationPct,
+          healthy,
+          lastSeenAt: n.lastSeenAt,
+          lastError: n.lastError,
+          dockerVersion: n.dockerVersion,
+        },
+      };
     });
-    return { nodes: nodes.map(redactNode) };
+    return { nodes: nodesOut };
   });
 
   // ----- Create node -----

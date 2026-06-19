@@ -170,6 +170,13 @@ export interface AcquireInput {
   durationMinutes: number;
   /** Explicit expiry. Overrides durationMinutes. Use for batch-tied lifetime. */
   expiresAt?: Date;
+  /**
+   * Request-level node placement override (resolved node ids). When set,
+   * fresh provisions round-robin across these nodes instead of the
+   * template's pinned/allowed pool, and a claimed prewarm must live on one
+   * of them. Falls back to the fleet scheduler if none are eligible.
+   */
+  nodeIds?: string[];
 }
 
 /**
@@ -207,8 +214,15 @@ export async function acquireInstance(input: AcquireInput): Promise<LabInstance>
     return existing;
   }
 
-  // 1. Try claiming a prewarm.
-  const claimed = await claimPrewarm(input.template.id, input.userIdHash, expiresAt);
+  // 1. Try claiming a prewarm. When the request pins a node set, only a
+  // prewarm already sitting on one of those nodes is eligible — otherwise
+  // we'd violate the requested placement.
+  const claimed = await claimPrewarm(
+    input.template.id,
+    input.userIdHash,
+    expiresAt,
+    input.nodeIds,
+  );
   if (claimed) return claimed;
 
   // 2. Provision fresh.
@@ -218,6 +232,7 @@ export async function acquireInstance(input: AcquireInput): Promise<LabInstance>
     userIdHash: input.userIdHash,
     expiresAt,
     isPrewarm: false,
+    nodeIds: input.nodeIds,
   });
 }
 
@@ -225,24 +240,45 @@ async function claimPrewarm(
   templateId: string,
   userIdHash: string,
   expiresAt: Date,
+  nodeIds?: string[],
 ): Promise<LabInstance | null> {
   // Atomic claim: UPDATE ... WHERE isPrewarm=true AND status='ready' LIMIT 1.
   // Prisma doesn't expose UPDATE-LIMIT-RETURNING directly, so we use a raw CTE.
-  const rows = await prisma.$queryRaw<LabInstance[]>`
-    UPDATE "LabInstance"
-       SET "isPrewarm" = false,
-           "userIdHash" = ${userIdHash},
-           "expiresAt" = ${expiresAt}
-     WHERE "id" IN (
-       SELECT "id" FROM "LabInstance"
-        WHERE "templateId" = ${templateId}
-          AND "isPrewarm" = true
-          AND "status" = 'ready'
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-     )
-     RETURNING *;
-  `;
+  // When the caller pins a node set, the inner SELECT is restricted to those
+  // nodes so a claimed prewarm always honours the requested placement.
+  const pinned = (nodeIds ?? []).filter((id) => id.length > 0);
+  const rows = pinned.length > 0
+    ? await prisma.$queryRaw<LabInstance[]>`
+        UPDATE "LabInstance"
+           SET "isPrewarm" = false,
+               "userIdHash" = ${userIdHash},
+               "expiresAt" = ${expiresAt}
+         WHERE "id" IN (
+           SELECT "id" FROM "LabInstance"
+            WHERE "templateId" = ${templateId}
+              AND "isPrewarm" = true
+              AND "status" = 'ready'
+              AND "nodeId" = ANY(${pinned})
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *;
+      `
+    : await prisma.$queryRaw<LabInstance[]>`
+        UPDATE "LabInstance"
+           SET "isPrewarm" = false,
+               "userIdHash" = ${userIdHash},
+               "expiresAt" = ${expiresAt}
+         WHERE "id" IN (
+           SELECT "id" FROM "LabInstance"
+            WHERE "templateId" = ${templateId}
+              AND "isPrewarm" = true
+              AND "status" = 'ready'
+            LIMIT 1
+            FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *;
+      `;
   const claimed = rows[0] ?? null;
   if (claimed) {
     emitUsage({
@@ -263,6 +299,13 @@ export interface ProvisionNewInput {
   userIdHash?: string;
   expiresAt: Date;
   isPrewarm: boolean;
+  /**
+   * Request-level node placement override (resolved node ids). When set,
+   * node resolution round-robins across these nodes instead of the
+   * template's pinned/allowed pool (sticky-volume pinning still wins for
+   * data integrity). Falls back to the fleet scheduler if none eligible.
+   */
+  nodeIds?: string[];
 }
 
 /**
@@ -392,7 +435,11 @@ export async function provisionNew(input: ProvisionNewInput): Promise<LabInstanc
     }
   }
   if (!node) {
-    node = await resolveNodeForProvision(input.tenantId, input.template.id);
+    node = await resolveNodeForProvision(
+      input.tenantId,
+      input.template.id,
+      input.nodeIds,
+    );
   }
 
   // For linked-clone instances we record the on-node overlay path on

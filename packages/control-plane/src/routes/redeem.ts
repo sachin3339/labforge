@@ -102,6 +102,8 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
           // over. Without this, the container would be reaped after
           // durationMinutes (≤ 8h) even though the URL is valid for 30 days.
           expiresAt: launch.expiresAt,
+          // Honour the launch/batch node-placement override, if any.
+          nodeIds: launch.nodeIds,
         });
       } catch (err) {
         reply.code(500);
@@ -217,9 +219,18 @@ export const redeemRoutes: FastifyPluginAsync = async (app) => {
           // connection_id is available; fall back to the legacy XML
           // query-auth URL if JDBC is disabled or not yet provisioned.
           const connId = await getGuacConnectionId(instance.id);
+          // Serve the Guacamole client from the VM's OWN lab subdomain
+          // origin (`https://<sub>.lab.<root>`) instead of the shared
+          // gateway host. Browsers partition localStorage by origin, so each
+          // VM gets its own GUAC_AUTH / GUAC_HISTORY / GUAC_PREFERENCES and
+          // opening multiple VMs in separate tabs no longer overwrites each
+          // other's auth token. Caddy routes `/guacamole/*` on `*.lab`
+          // straight to the guacamole container, so this path carries no
+          // lf_session cookie (Guacamole auths via the URL query params).
+          const guacBase = instanceUrl(instance.subdomain);
           const url =
             connId != null
-              ? guacamoleClientUrlJdbc(gconf.publicUrl, creds.user, creds.password, connId)
+              ? guacamoleClientUrlJdbc(guacBase, creds.user, creds.password, connId)
               : guacamoleClientUrl(gconf, creds.user, creds.password);
           // No lf_session cookie here — Guacamole is a separate origin
           // and uses its own auth (the username/password in the URL).

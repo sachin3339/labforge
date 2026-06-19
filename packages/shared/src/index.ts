@@ -222,6 +222,13 @@ export const LaunchRequest = z.object({
   returnUrl: z.string().url().optional(),
   /** Webhook for lifecycle events (HMAC-signed). */
   webhookUrl: z.string().url().optional(),
+  /**
+   * Optional node placement override. When set, new instances for this
+   * launch round-robin across these nodes (by node name) instead of the
+   * template's pinned/allowed pool. If every listed node is unhealthy or
+   * at capacity, the scheduler falls back to the normal fleet pool.
+   */
+  nodeNames: z.array(z.string().min(1).max(128)).max(50).optional(),
   /** Free-form context (course id, lesson id, etc.). Stored, returned in webhooks. */
   context: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
 });
@@ -264,6 +271,13 @@ export const BatchLaunchRequest = z.object({
   webhookUrl: z.string().url().optional(),
   /** Where redeemed labs send the student on exit. */
   returnUrl: z.string().url().optional(),
+  /**
+   * Optional node placement override applied to every seat in the batch.
+   * Instances round-robin across these nodes (by node name) instead of the
+   * template's pinned/allowed pool. If every listed node is unhealthy or at
+   * capacity, the scheduler falls back to the normal fleet pool.
+   */
+  nodeNames: z.array(z.string().min(1).max(128)).max(50).optional(),
 });
 export type BatchLaunchRequest = z.infer<typeof BatchLaunchRequest>;
 

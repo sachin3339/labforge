@@ -38,6 +38,26 @@ export function LabFrame({
     return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
 
+  // Hand keyboard focus to the iframe so the student can type immediately on
+  // open. Guacamole's keyboard handler lives inside the (cross-origin) iframe
+  // document and only receives key events while the iframe is focused —
+  // without this, keystrokes go to *this* parent page and never reach the VM,
+  // which reads as "I can't type in the VM" right after opening. We re-focus
+  // on initial mount and again whenever this window regains focus (e.g. after
+  // alt-tab) so the keyboard keeps working without a manual click.
+  const focusFrame = () => {
+    // Defer a tick so the focus lands after any click/route handling.
+    requestAnimationFrame(() => {
+      try { iframeRef.current?.focus(); } catch { /* noop */ }
+    });
+  };
+
+  useEffect(() => {
+    focusFrame();
+    window.addEventListener('focus', focusFrame);
+    return () => window.removeEventListener('focus', focusFrame);
+  }, []);
+
   const enterFullscreen = async () => {
     const el = containerRef.current;
     if (!el) return;
@@ -45,6 +65,9 @@ export function LabFrame({
       // Fullscreen the wrapper (not just the iframe) so our control bar
       // stays accessible inside fullscreen mode.
       await el.requestFullscreen({ navigationUI: 'hide' });
+      // Re-focus the iframe after the fullscreen transition so typing keeps
+      // working in fullscreen (the transition can steal focus).
+      focusFrame();
     } catch {
       /* user-gesture or permissions issue — fall back to no-op */
     }
@@ -60,6 +83,7 @@ export function LabFrame({
     <div
       ref={containerRef}
       className="fixed inset-0 z-50 flex flex-col bg-ink-900 text-ink-50"
+      onMouseDown={focusFrame}
     >
       {/* Slim control bar (auto-hides in fullscreen via group-hover trick) */}
       <div className="flex items-center justify-between gap-3 border-b border-ink-700 bg-ink-900/95 px-4 py-2 text-xs">
@@ -119,6 +143,7 @@ export function LabFrame({
         ref={iframeRef}
         src={src}
         title="Lab session"
+        onLoad={focusFrame}
         // allow: clipboard so VS Code copy/paste works; fullscreen so the
         // KasmVNC desktop's own "FS" button continues to function inside
         // our wrapper; the rest are quality-of-life passes.

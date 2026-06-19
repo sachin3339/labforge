@@ -133,7 +133,39 @@ async function buildDockerClient(node: Node | null): Promise<Docker> {
 }
 
 /**
+ * Resolve a list of node *names* (as supplied by the LMS/API in a launch
+ * or batch request) to node ids. Returns the matched ids in the same order
+ * the names were given (dedup-preserving) plus the list of names that did
+ * not match any node — callers surface `unknown` as a 400 so a typo'd node
+ * name fails loudly instead of silently falling back to the fleet pool.
+ *
+ * Matching is case-insensitive on `Node.name` (which is globally unique).
+ */
+export async function resolveNodeNamesToIds(
+  names: string[],
+): Promise<{ ids: string[]; unknown: string[] }> {
+  const wanted = Array.from(new Set(names.map((n) => n.trim()).filter(Boolean)));
+  if (wanted.length === 0) return { ids: [], unknown: [] };
+
+  const nodes = await prisma.node.findMany({ select: { id: true, name: true } });
+  const byLower = new Map(nodes.map((n) => [n.name.toLowerCase(), n.id]));
+
+  const ids: string[] = [];
+  const unknown: string[] = [];
+  for (const name of wanted) {
+    const id = byLower.get(name.toLowerCase());
+    if (id) ids.push(id);
+    else unknown.push(name);
+  }
+  return { ids, unknown };
+}
+
+/**
  * Resolve the node a fresh instance should land on. Resolution order:
+ *   0. `overrideNodeIds` (from the launch/batch API request) — round-robin
+ *      across these nodes; fully overrides the template/tenant pin. If all
+ *      of them are unhealthy or at capacity we fall through to the normal
+ *      fleet scheduler (steps 3-5) rather than failing the launch.
  *   1. tenant.defaultNodeId (if the tenant has been pinned)
  *   2. template.defaultNodeId (if the template has been pinned to a single node)
  *   3. config.LAB_SCHEDULER='spread' → least-loaded healthy enabled node,
@@ -148,7 +180,31 @@ async function buildDockerClient(node: Node | null): Promise<Docker> {
 export async function resolveNodeForProvision(
   tenantId: string,
   templateId: string,
+  overrideNodeIds?: string[],
 ): Promise<Node | null> {
+  // 0 — request-level placement override. When the launch/batch API
+  // supplied an explicit node set we round-robin across it and ignore the
+  // template/tenant pin entirely. If none of the requested nodes is
+  // currently eligible (all disabled/unhealthy/at-capacity) we fall
+  // through to the normal fleet scheduler below rather than failing.
+  const override = (overrideNodeIds ?? []).filter((id) => id.length > 0);
+  if (override.length > 0) {
+    const picked = await pickLeastLoadedNode(override);
+    if (picked) return picked;
+    // fall through to fleet scheduler (steps 3-5) — note we also skip the
+    // template/tenant pin here so the override's intent ("spread, don't
+    // pin") is preserved on fallback.
+    const def0 = await prisma.node.findFirst({
+      where: { enabled: true, isDefault: true },
+    });
+    if (def0) return def0;
+    const spreadAll = await pickLeastLoadedNode(undefined);
+    if (spreadAll) return spreadAll;
+    const enabled0 = await prisma.node.findMany({ where: { enabled: true }, take: 2 });
+    if (enabled0.length === 1) return enabled0[0]!;
+    return null;
+  }
+
   const [tenant, template] = await Promise.all([
     prisma.tenant.findUnique({ where: { id: tenantId }, select: { defaultNodeId: true } }),
     prisma.labTemplate.findUnique({
